@@ -1,133 +1,98 @@
-use axum::{
-    Router,
-    extract::{Path, State},
-    http::StatusCode,
-    response::Json,
-    routing::get,
+//! BNS Server - Bitcoin Name Service
+//!
+//! Main entry point.
+//!
+//! Supports two modes:
+//! 1. Proxy-only mode: Only ORD_BACKEND_URL is set, provides name resolution
+//! 2. Full mode: DATABASE_URL is also set, provides auth and other services
+
+use std::sync::Arc;
+
+use sqlx::postgres::PgPoolOptions;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use bns_server::{
+    api,
+    config::Config,
+    service::{AuthConfig, AuthService},
+    state::AppState,
 };
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use std::{env, sync::Arc};
-
-#[derive(Clone)]
-struct AppState {
-    client: Client,
-    backend_url: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ResolveRuneResult {
-    address: String,
-    inscription_id: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ResolveRuneResponse {
-    result: ResolveRuneResult,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ResolveAddressResponse {
-    rune_names: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
-}
-
-async fn resolve_rune(
-    State(state): State<Arc<AppState>>,
-    Path(rune): Path<String>,
-) -> Result<Json<ResolveRuneResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let url = format!("{}/resolve_rune/{}", state.backend_url, rune);
-
-    let resp = state.client.get(&url).send().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(ErrorResponse { error: e.to_string() }),
-        )
-    })?;
-
-    if !resp.status().is_success() {
-        return Err((
-            StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-            Json(ErrorResponse {
-                error: format!("Backend returned status: {}", resp.status()),
-            }),
-        ));
-    }
-
-    let data: ResolveRuneResponse = resp.json().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(ErrorResponse { error: e.to_string() }),
-        )
-    })?;
-
-    Ok(Json(data))
-}
-
-async fn resolve_address(
-    State(state): State<Arc<AppState>>,
-    Path(address): Path<String>,
-) -> Result<Json<ResolveAddressResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let url = format!("{}/resolve_address/{}", state.backend_url, address);
-
-    let resp = state.client.get(&url).send().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(ErrorResponse { error: e.to_string() }),
-        )
-    })?;
-
-    if !resp.status().is_success() {
-        return Err((
-            StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-            Json(ErrorResponse {
-                error: format!("Backend returned status: {}", resp.status()),
-            }),
-        ));
-    }
-
-    let data: ResolveAddressResponse = resp.json().await.map_err(|e| {
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(ErrorResponse { error: e.to_string() }),
-        )
-    })?;
-
-    Ok(Json(data))
-}
-
-async fn health() -> &'static str {
-    "OK"
-}
 
 #[tokio::main]
-async fn main() {
-    // ORD backend URL via env var (GKE Internal LB IP)
-    // e.g., ORD_BACKEND_URL=http://10.128.15.243
-    let ord_backend_url =
-        env::var("ORD_BACKEND_URL").expect("ORD_BACKEND_URL environment variable is required");
+async fn main() -> anyhow::Result<()> {
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,bns_server=debug".into()),
+        ))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
-    // Cloud Run sets PORT automatically
-    let port = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    // Load configuration
+    dotenvy::dotenv().ok();
+    let config = Config::from_env()?;
 
-    let state = Arc::new(AppState {
-        client: Client::new(),
-        backend_url: ord_backend_url,
-    });
+    tracing::info!("Starting BNS Server on port {}", config.port);
 
-    let app = Router::new()
-        .route("/resolve_rune/{rune}", get(resolve_rune))
-        .route("/resolve_address/{address}", get(resolve_address))
-        .route("/health", get(health))
-        .with_state(state);
+    if let Some(ord_url) = &config.ord_url {
+        tracing::info!("Ord backend URL: {}", ord_url);
+    } else {
+        tracing::warn!("No Ord backend URL configured - name resolution will not work");
+    }
 
-    let addr = format!("0.0.0.0:{}", port);
-    println!("Server listening on {}", addr);
+    // Create HTTP client for Ord backend
+    let http_client = reqwest::Client::new();
 
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    // Initialize database and auth service if DATABASE_URL is configured
+    let (db_pool, auth_service) = if let Some(database_url) = &config.database_url {
+        tracing::info!("Database URL configured - enabling auth services");
+
+        // Connect to PostgreSQL
+        tracing::info!("Connecting to PostgreSQL...");
+        let pool = PgPoolOptions::new()
+            .max_connections(10)
+            .connect(database_url)
+            .await?;
+        tracing::info!("Connected to PostgreSQL");
+
+        // Run migrations
+        tracing::info!("Running database migrations...");
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        tracing::info!("Migrations complete");
+
+        // Initialize auth service
+        let auth_config = AuthConfig {
+            session_ttl_secs: config.session_ttl_secs,
+        };
+        let auth_service = Arc::new(AuthService::new(pool.clone(), auth_config));
+
+        (Some(pool), Some(auth_service))
+    } else {
+        tracing::info!("No database URL configured - running in proxy-only mode");
+        (None, None)
+    };
+
+    // Create application state
+    let state = AppState::new(config.clone(), http_client, auth_service, db_pool);
+
+    // Build router
+    let app = api::build_router(state)
+        .layer(TraceLayer::new_for_http())
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        );
+
+    // Start server
+    let addr = format!("0.0.0.0:{}", config.port);
+    tracing::info!("Server listening on {}", addr);
+
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }

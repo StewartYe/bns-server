@@ -9,6 +9,9 @@ REPO_NAME="bns"
 IMAGE_TAG="latest"
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${IMAGE_TAG}"
 
+# Cloud SQL instance connection name
+CLOUD_SQL_INSTANCE="${PROJECT_ID}:${REGION}:octopus"
+
 # Create Artifact Registry repository (if not exists)
 echo "Creating Artifact Registry repository..."
 gcloud artifacts repositories create ${REPO_NAME} \
@@ -29,7 +32,9 @@ gcloud run deploy ${SERVICE_NAME} \
     --region=${REGION} \
     --vpc-connector=${CONNECTOR_NAME} \
     --vpc-egress=private-ranges-only \
+    --add-cloudsql-instances=${CLOUD_SQL_INSTANCE} \
     --set-env-vars="ORD_BACKEND_URL=http://10.128.15.243" \
+    --set-secrets="DATABASE_URL=bns-testnet-database-url:latest" \
     --port=8080 \
     --cpu=1 \
     --memory=512Mi \
