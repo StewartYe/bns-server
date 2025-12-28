@@ -1,7 +1,7 @@
 //! BNS Server - Bitcoin Name Service
 //!
 //! A Rust web server providing:
-//! - SIWB (Sign-In With Bitcoin) authentication
+//! - BIP-322 authentication (Sign-In With Bitcoin)
 //! - Name resolution (forward/reverse)
 //! - Trading marketplace (list/delist/buy) [future]
 //! - Market rankings and statistics [future]
@@ -11,13 +11,13 @@
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │                          API Layer                              │
-//! │  Auth (SIWB) │ SDK API │ REST API │ WebSocket                   │
+//! │  Auth (BIP-322) │ SDK API │ REST API │ WebSocket                │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │                       Service Layer                             │
 //! │  Auth │ Name │ Trading │ Market │ User │ ShoutOut │ Event       │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │                    Infrastructure Layer                         │
-//! │  PostgreSQL │ SIWB │ Redis │ Canister │ Blockchain              │
+//! │  PostgreSQL │ BIP-322 │ Redis │ Canister │ Blockchain           │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 

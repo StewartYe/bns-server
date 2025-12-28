@@ -25,7 +25,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         // Auth endpoints
-        .route("/api/auth/siwb", post(super::auth::authenticate))
+        .route("/api/auth/login", post(super::auth::authenticate))
         .route("/api/auth/logout", post(super::auth::logout))
         .route("/api/auth/me", get(super::auth::get_me))
         // Market endpoints

@@ -1,15 +1,6 @@
-# BNS SIWB Test Frontend
+# BNS BIP-322 Login Test
 
-A simple test frontend for SIWB (Sign-In With Bitcoin) authentication.
-
-## SIWB Canister IDs
-
-| Network  | Canister ID                    |
-|----------|--------------------------------|
-| Mainnet  | `3ka66-oaaaa-aaaao-qk2kq-cai`  |
-| Testnet  | `xhwud-7yaaa-aaaar-qbyqa-cai`  |
-
-Currently configured to use **testnet**.
+A simple test frontend for BIP-322 authentication with UniSat wallet.
 
 ## Prerequisites
 
@@ -29,24 +20,30 @@ Then open http://localhost:5173 in your browser.
 ## Usage
 
 1. Make sure UniSat wallet is installed and unlocked
-2. Click "Login with UniSat (Full Flow)" button
+2. Click "Login with UniSat" button
 3. Approve the wallet connection in UniSat popup
-4. Sign the SIWB message in UniSat popup
+4. Sign the login message in UniSat popup
 5. View the login result in the log output
 
-## Flow Breakdown
+## Message Format
 
-The full login flow consists of:
+The login message format is:
+```
+Sign in to bns.zone at {timestamp} with nonce {nonce}
+```
 
-1. **Connect Wallet** - Calls `setWalletProvider('unisat')` to connect UniSat
-2. **Prepare Login** - Calls `siwb_prepare_login(address)` on the canister to get a message to sign
-3. **Login** - Signs the message with UniSat, then calls `siwb_login(signature, address, pubkey, sessionKey, signType)` on the canister
+- `timestamp`: Unix timestamp in seconds
+- `nonce`: Random 16-character alphanumeric string
 
-## Switching Networks
+## API Endpoint
 
-Edit `src/config.ts` to switch between testnet and mainnet:
-
-```ts
-// Change to 'mainnet' for production
-export const CURRENT_NETWORK = 'testnet' as const;
+The frontend calls `POST /v1/auth/login` with:
+```json
+{
+  "address": "tb1q...",
+  "message": "Sign in to bns.zone at 1735344000 with nonce abc123def456",
+  "signature": "base64...",
+  "timestamp": 1735344000,
+  "nonce": "abc123def456"
+}
 ```

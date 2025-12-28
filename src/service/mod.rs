@@ -1,7 +1,7 @@
 //! Service layer
 //!
 //! Business logic services:
-//! - AuthService: SIWB authentication and session management
+//! - AuthService: BIP-322 authentication and session management
 //! - NameService: Name resolution, search, details
 //! - TradingService: List, delist, buy operations
 //! - MarketService: Rankings, statistics
