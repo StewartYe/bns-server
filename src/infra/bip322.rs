@@ -5,36 +5,48 @@
 
 use crate::error::{AppError, Result};
 
+/// The domain used in sign-in messages
+pub const SIGN_IN_DOMAIN: &str = "bns.zone";
+
+/// Maximum allowed time drift (5 minutes)
+const MAX_TIME_DRIFT_SECS: i64 = 5 * 60;
+
 /// Verify a BIP-322 signature
 ///
 /// ## Parameters
 /// - `address`: Bitcoin address (P2WPKH, P2TR, etc.)
 /// - `message`: The message that was signed
 /// - `signature`: Base64-encoded BIP-322 signature
-/// - `timestamp`: Timestamp in milliseconds
+/// - `timestamp`: Timestamp in seconds (Unix timestamp)
+/// - `nonce`: Random nonce for replay protection
 ///
-/// ## Verification Steps
-/// 1. Check timestamp is within 5 minutes
-/// 2. Verify message format matches "bns-login:{timestamp}"
-/// 3. Verify the BIP-322 signature (TODO: implement full verification)
+/// ## Message Format
+/// The message must be: "Sign in to bns.zone at {timestamp} with nonce {nonce}"
 pub fn verify_bip322_signature(
     address: &str,
     message: &str,
     signature: &str,
     timestamp: i64,
+    nonce: &str,
 ) -> Result<()> {
-    // Step 1: Check timestamp is within 5 minutes
-    let now = chrono::Utc::now().timestamp_millis();
+    // Step 1: Validate nonce format (should be a reasonable random string)
+    validate_nonce(nonce)?;
+
+    // Step 2: Check timestamp is within acceptable range
+    let now = chrono::Utc::now().timestamp();
     let diff = (now - timestamp).abs();
-    if diff > 5 * 60 * 1000 {
+    if diff > MAX_TIME_DRIFT_SECS {
         return Err(AppError::Unauthorized(format!(
-            "Timestamp expired: diff={}ms",
-            diff
+            "Timestamp expired or invalid: diff={}s (max={}s)",
+            diff, MAX_TIME_DRIFT_SECS
         )));
     }
 
-    // Step 2: Verify message format
-    let expected_message = format!("bns-login:{}", timestamp);
+    // Step 3: Verify message format
+    let expected_message = format!(
+        "Sign in to {} at {} with nonce {}",
+        SIGN_IN_DOMAIN, timestamp, nonce
+    );
     if message != expected_message {
         return Err(AppError::BadRequest(format!(
             "Invalid message format: expected '{}', got '{}'",
@@ -42,60 +54,46 @@ pub fn verify_bip322_signature(
         )));
     }
 
-    // Step 3: Verify BIP-322 signature
-    // TODO: Implement full BIP-322 verification
-    // For now, we do basic validation and log a warning
+    // Step 4: Verify BIP-322 signature using the bip322 crate
+    bip322::verify_simple_encoded(address, message, signature).map_err(|e| {
+        tracing::warn!(
+            "BIP-322 signature verification failed for address {}: {:?}",
+            address,
+            e
+        );
+        AppError::Unauthorized(format!("Invalid BIP-322 signature: {:?}", e))
+    })?;
 
-    // Validate signature is valid base64
-    let _signature_bytes = base64_decode(signature)?;
+    tracing::info!("BIP-322 signature verified for address: {}", address);
+    Ok(())
+}
 
-    // Validate address format
-    validate_bitcoin_address(address)?;
+/// Validate nonce format
+fn validate_nonce(nonce: &str) -> Result<()> {
+    // Nonce should be 8-64 characters, alphanumeric or hex
+    if nonce.len() < 8 || nonce.len() > 64 {
+        return Err(AppError::BadRequest(format!(
+            "Invalid nonce length: {} (expected 8-64)",
+            nonce.len()
+        )));
+    }
 
-    tracing::warn!(
-        "BIP-322 signature verification not fully implemented - accepting signature for address: {}",
-        address
-    );
+    // Allow alphanumeric and common hex characters
+    if !nonce.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(AppError::BadRequest(
+            "Invalid nonce format: must be alphanumeric".into(),
+        ));
+    }
 
     Ok(())
 }
 
-/// Decode base64 signature
-fn base64_decode(s: &str) -> Result<Vec<u8>> {
-    use base64::{Engine, engine::general_purpose::STANDARD};
-    STANDARD
-        .decode(s)
-        .map_err(|e| AppError::BadRequest(format!("Invalid base64 signature: {}", e)))
-}
-
-/// Validate Bitcoin address format
-fn validate_bitcoin_address(address: &str) -> Result<()> {
-    // Basic validation for common address formats
-    let valid = address.starts_with("bc1")    // mainnet bech32 (P2WPKH, P2WSH, P2TR)
-        || address.starts_with("tb1")         // testnet bech32
-        || address.starts_with("bcrt1")       // regtest bech32
-        || address.starts_with('1')           // mainnet P2PKH
-        || address.starts_with('3')           // mainnet P2SH
-        || address.starts_with('m')           // testnet P2PKH
-        || address.starts_with('n')           // testnet P2PKH
-        || address.starts_with('2');          // testnet P2SH
-
-    if !valid {
-        return Err(AppError::BadRequest(format!(
-            "Invalid Bitcoin address format: {}",
-            address
-        )));
-    }
-
-    // Check length
-    if address.len() < 26 || address.len() > 90 {
-        return Err(AppError::BadRequest(format!(
-            "Invalid Bitcoin address length: {}",
-            address.len()
-        )));
-    }
-
-    Ok(())
+/// Generate expected message for signing
+pub fn generate_sign_in_message(timestamp: i64, nonce: &str) -> String {
+    format!(
+        "Sign in to {} at {} with nonce {}",
+        SIGN_IN_DOMAIN, timestamp, nonce
+    )
 }
 
 #[cfg(test)]
@@ -103,14 +101,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validate_bitcoin_address() {
-        // Valid addresses
-        assert!(validate_bitcoin_address("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq").is_ok());
-        assert!(validate_bitcoin_address("tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2").is_ok());
-        assert!(validate_bitcoin_address("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2").is_ok());
+    fn test_generate_sign_in_message() {
+        let message = generate_sign_in_message(1735344000, "abc12345");
+        assert_eq!(
+            message,
+            "Sign in to bns.zone at 1735344000 with nonce abc12345"
+        );
+    }
 
-        // Invalid addresses
-        assert!(validate_bitcoin_address("invalid").is_err());
-        assert!(validate_bitcoin_address("").is_err());
+    #[test]
+    fn test_validate_nonce() {
+        // Valid nonces
+        assert!(validate_nonce("abc12345").is_ok());
+        assert!(validate_nonce("a1b2c3d4-e5f6").is_ok());
+        assert!(validate_nonce("0123456789abcdef").is_ok());
+
+        // Invalid nonces
+        assert!(validate_nonce("short").is_err()); // too short
+        assert!(validate_nonce("").is_err()); // empty
+        assert!(validate_nonce("has spaces here").is_err()); // spaces
     }
 }

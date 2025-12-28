@@ -165,8 +165,10 @@ function App() {
       const address = btcAddress || (await window.unisat!.getAccounts())[0];
 
       // Step 2: Create and sign message
-      const timestamp = Date.now();
-      const message = `bns-login:${timestamp}`;
+      // Message format: "Sign in to bns.zone at {timestamp} with nonce {nonce}"
+      const timestamp = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
+      const nonce = crypto.randomUUID().replace(/-/g, '').substring(0, 16); // 16 char hex nonce
+      const message = `Sign in to bns.zone at ${timestamp} with nonce ${nonce}`;
       addLog(`Step 2: Signing message: ${message}`);
 
       const signature = await window.unisat!.signMessage(message, 'bip322-simple');
@@ -181,6 +183,7 @@ function App() {
         message,
         signature,
         timestamp,
+        nonce,
       };
 
       addLog(`Request: ${JSON.stringify(requestBody).substring(0, 150)}...`);

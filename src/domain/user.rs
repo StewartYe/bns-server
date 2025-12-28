@@ -33,12 +33,14 @@ pub struct UserSession {
 pub struct Bip322AuthRequest {
     /// Bitcoin address
     pub address: String,
-    /// Message that was signed: "bns-login:{timestamp}"
+    /// Message that was signed: "Sign in to bns.zone at {timestamp} with nonce {nonce}"
     pub message: String,
     /// BIP-322 signature (base64 encoded)
     pub signature: String,
-    /// Timestamp in milliseconds
+    /// Timestamp in seconds (Unix timestamp)
     pub timestamp: i64,
+    /// Random nonce for replay protection
+    pub nonce: String,
 }
 
 /// Authentication response

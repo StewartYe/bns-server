@@ -29,6 +29,7 @@ redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 # Authentication / Crypto
 sha2 = "0.10"
 base64 = "0.22"
+bip322 = "0.0"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }

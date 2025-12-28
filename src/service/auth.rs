@@ -120,6 +120,7 @@ impl AuthService {
             &request.message,
             &request.signature,
             request.timestamp,
+            &request.nonce,
         )?;
 
         tracing::info!("Verified BIP-322 signature for address: {}", btc_address);

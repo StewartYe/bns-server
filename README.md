@@ -54,14 +54,23 @@ Response:
 
 Authenticate using BIP-322 message signing (supported by UniSat and other modern wallets).
 
+**Message Format:**
+```
+Sign in to bns.zone at {timestamp} with nonce {nonce}
+```
+
+- `timestamp`: Unix timestamp in seconds
+- `nonce`: Random alphanumeric string (8-64 characters)
+
 ```bash
 curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-    "message": "bns-login:1766676294175",
+    "message": "Sign in to bns.zone at 1735344000 with nonce abc123def456",
     "signature": "AUBvt7L2...(base64 BIP-322 signature)",
-    "timestamp": 1766676294175
+    "timestamp": 1735344000,
+    "nonce": "abc123def456"
   }'
 ```
 
