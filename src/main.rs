@@ -1,10 +1,6 @@
 //! BNS Server - Bitcoin Name Service
 //!
 //! Main entry point.
-//!
-//! Supports two modes:
-//! 1. Proxy-only mode: Only ORD_BACKEND_URL is set, provides name resolution
-//! 2. Full mode: DATABASE_URL is also set, provides auth and other services
 
 use std::sync::Arc;
 
@@ -45,37 +41,27 @@ async fn main() -> anyhow::Result<()> {
     // Create HTTP client for Ord backend
     let http_client = reqwest::Client::new();
 
-    // Initialize database and auth service if DATABASE_URL is configured
-    let (db_pool, auth_service) = if let Some(database_url) = &config.database_url {
-        tracing::info!("Database URL configured - enabling auth services");
+    // Connect to PostgreSQL
+    tracing::info!("Connecting to PostgreSQL...");
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&config.database_url)
+        .await?;
+    tracing::info!("Connected to PostgreSQL");
 
-        // Connect to PostgreSQL
-        tracing::info!("Connecting to PostgreSQL...");
-        let pool = PgPoolOptions::new()
-            .max_connections(10)
-            .connect(database_url)
-            .await?;
-        tracing::info!("Connected to PostgreSQL");
+    // Run migrations
+    tracing::info!("Running database migrations...");
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    tracing::info!("Migrations complete");
 
-        // Run migrations
-        tracing::info!("Running database migrations...");
-        sqlx::migrate!("./migrations").run(&pool).await?;
-        tracing::info!("Migrations complete");
-
-        // Initialize auth service
-        let auth_config = AuthConfig {
-            session_ttl_secs: config.session_ttl_secs,
-        };
-        let auth_service = Arc::new(AuthService::new(pool.clone(), auth_config));
-
-        (Some(pool), Some(auth_service))
-    } else {
-        tracing::info!("No database URL configured - running in proxy-only mode");
-        (None, None)
+    // Initialize auth service
+    let auth_config = AuthConfig {
+        session_ttl_secs: config.session_ttl_secs,
     };
+    let auth_service = Arc::new(AuthService::new(pool.clone(), auth_config));
 
     // Create application state
-    let state = AppState::new(config.clone(), http_client, auth_service, db_pool);
+    let state = AppState::new(config.clone(), http_client, auth_service, pool);
 
     // Build router
     let app = api::build_router(state)

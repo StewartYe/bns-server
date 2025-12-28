@@ -10,8 +10,8 @@ pub struct Config {
     /// Server port
     pub port: u16,
 
-    /// PostgreSQL URL (Cloud SQL) - optional for proxy-only mode
-    pub database_url: Option<String>,
+    /// PostgreSQL URL (required)
+    pub database_url: String,
 
     /// Ord indexer URL (required for resolve_rune/resolve_address)
     pub ord_url: Option<String>,
@@ -23,13 +23,16 @@ pub struct Config {
 impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, ConfigError> {
+        let database_url = env::var("DATABASE_URL")
+            .map_err(|_| ConfigError::Missing("DATABASE_URL"))?;
+
         Ok(Self {
             port: env::var("PORT")
                 .unwrap_or_else(|_| "8080".to_string())
                 .parse()
                 .map_err(|_| ConfigError::InvalidPort)?,
 
-            database_url: env::var("DATABASE_URL").ok(),
+            database_url,
 
             ord_url: env::var("ORD_URL")
                 .or_else(|_| env::var("ORD_BACKEND_URL"))

@@ -130,7 +130,7 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/health
 
 ## Environment Variables
 
-- `ORD_BACKEND_URL` - Backend service URL (GKE Internal LB)
-- `DATABASE_URL` - PostgreSQL connection string
+- `DATABASE_URL` - PostgreSQL connection string (required)
+- `ORD_BACKEND_URL` - Backend service URL for name resolution
 - `SESSION_TTL_SECS` - Session TTL in seconds (default: 86400)
 - `PORT` - Server port (default: 8080, set by Cloud Run)
