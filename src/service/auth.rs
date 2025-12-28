@@ -114,14 +114,8 @@ impl AuthService {
     pub async fn authenticate(&self, request: &Bip322AuthRequest) -> Result<AuthResponse> {
         let btc_address = &request.address;
 
-        // Verify BIP-322 signature
-        bip322::verify_bip322_signature(
-            btc_address,
-            &request.message,
-            &request.signature,
-            request.timestamp,
-            &request.nonce,
-        )?;
+        // Verify BIP-322 signature (timestamp and nonce are parsed from message)
+        bip322::verify_bip322_signature(btc_address, &request.message, &request.signature)?;
 
         tracing::info!("Verified BIP-322 signature for address: {}", btc_address);
 

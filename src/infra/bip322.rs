@@ -11,46 +11,66 @@ pub const SIGN_IN_DOMAIN: &str = "bns.zone";
 /// Maximum allowed time drift (5 minutes)
 const MAX_TIME_DRIFT_SECS: i64 = 5 * 60;
 
+/// Parsed sign-in message components
+struct ParsedMessage {
+    timestamp: i64,
+    nonce: String,
+}
+
+/// Parse the sign-in message to extract timestamp and nonce
+///
+/// Message format: "Sign in to bns.zone at {timestamp} with nonce {nonce}"
+fn parse_sign_in_message(message: &str) -> Result<ParsedMessage> {
+    let prefix = format!("Sign in to {} at ", SIGN_IN_DOMAIN);
+    let middle = " with nonce ";
+
+    // Check prefix
+    if !message.starts_with(&prefix) {
+        return Err(AppError::BadRequest(format!(
+            "Invalid message format: must start with '{}'",
+            prefix
+        )));
+    }
+
+    // Find the middle part
+    let rest = &message[prefix.len()..];
+    let parts: Vec<&str> = rest.splitn(2, middle).collect();
+    if parts.len() != 2 {
+        return Err(AppError::BadRequest(
+            "Invalid message format: missing 'with nonce'".into(),
+        ));
+    }
+
+    // Parse timestamp
+    let timestamp: i64 = parts[0].parse().map_err(|_| {
+        AppError::BadRequest(format!("Invalid timestamp in message: '{}'", parts[0]))
+    })?;
+
+    let nonce = parts[1].to_string();
+
+    Ok(ParsedMessage { timestamp, nonce })
+}
+
 /// Verify a BIP-322 signature
 ///
 /// ## Parameters
 /// - `address`: Bitcoin address (P2WPKH, P2TR, etc.)
-/// - `message`: The message that was signed
+/// - `message`: The message that was signed (format: "Sign in to bns.zone at {timestamp} with nonce {nonce}")
 /// - `signature`: Base64-encoded BIP-322 signature
-/// - `timestamp`: Timestamp in seconds (Unix timestamp)
-/// - `nonce`: Random nonce for replay protection
-///
-/// ## Message Format
-/// The message must be: "Sign in to bns.zone at {timestamp} with nonce {nonce}"
-pub fn verify_bip322_signature(
-    address: &str,
-    message: &str,
-    signature: &str,
-    timestamp: i64,
-    nonce: &str,
-) -> Result<()> {
-    // Step 1: Validate nonce format (should be a reasonable random string)
-    validate_nonce(nonce)?;
+pub fn verify_bip322_signature(address: &str, message: &str, signature: &str) -> Result<()> {
+    // Step 1: Parse message to extract timestamp and nonce
+    let parsed = parse_sign_in_message(message)?;
 
-    // Step 2: Check timestamp is within acceptable range
+    // Step 2: Validate nonce format
+    validate_nonce(&parsed.nonce)?;
+
+    // Step 3: Check timestamp is within acceptable range
     let now = chrono::Utc::now().timestamp();
-    let diff = (now - timestamp).abs();
+    let diff = (now - parsed.timestamp).abs();
     if diff > MAX_TIME_DRIFT_SECS {
         return Err(AppError::Unauthorized(format!(
             "Timestamp expired or invalid: diff={}s (max={}s)",
             diff, MAX_TIME_DRIFT_SECS
-        )));
-    }
-
-    // Step 3: Verify message format
-    let expected_message = format!(
-        "Sign in to {} at {} with nonce {}",
-        SIGN_IN_DOMAIN, timestamp, nonce
-    );
-    if message != expected_message {
-        return Err(AppError::BadRequest(format!(
-            "Invalid message format: expected '{}', got '{}'",
-            expected_message, message
         )));
     }
 
@@ -70,7 +90,7 @@ pub fn verify_bip322_signature(
 
 /// Validate nonce format
 fn validate_nonce(nonce: &str) -> Result<()> {
-    // Nonce should be 8-64 characters, alphanumeric or hex
+    // Nonce should be 8-64 characters, alphanumeric
     if nonce.len() < 8 || nonce.len() > 64 {
         return Err(AppError::BadRequest(format!(
             "Invalid nonce length: {} (expected 8-64)",
@@ -78,7 +98,7 @@ fn validate_nonce(nonce: &str) -> Result<()> {
         )));
     }
 
-    // Allow alphanumeric and common hex characters
+    // Allow alphanumeric and hyphen
     if !nonce.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(AppError::BadRequest(
             "Invalid nonce format: must be alphanumeric".into(),
@@ -88,7 +108,7 @@ fn validate_nonce(nonce: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generate expected message for signing
+/// Generate expected message for signing (utility for clients)
 pub fn generate_sign_in_message(timestamp: i64, nonce: &str) -> String {
     format!(
         "Sign in to {} at {} with nonce {}",
@@ -107,6 +127,24 @@ mod tests {
             message,
             "Sign in to bns.zone at 1735344000 with nonce abc12345"
         );
+    }
+
+    #[test]
+    fn test_parse_sign_in_message() {
+        let message = "Sign in to bns.zone at 1735344000 with nonce abc12345";
+        let parsed = parse_sign_in_message(message).unwrap();
+        assert_eq!(parsed.timestamp, 1735344000);
+        assert_eq!(parsed.nonce, "abc12345");
+    }
+
+    #[test]
+    fn test_parse_sign_in_message_invalid() {
+        // Wrong prefix
+        assert!(parse_sign_in_message("Login to bns.zone at 123 with nonce abc").is_err());
+        // Missing nonce
+        assert!(parse_sign_in_message("Sign in to bns.zone at 123").is_err());
+        // Invalid timestamp
+        assert!(parse_sign_in_message("Sign in to bns.zone at abc with nonce 12345678").is_err());
     }
 
     #[test]

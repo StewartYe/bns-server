@@ -68,9 +68,7 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/auth
   -d '{
     "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
     "message": "Sign in to bns.zone at 1735344000 with nonce abc123def456",
-    "signature": "AUBvt7L2...(base64 BIP-322 signature)",
-    "timestamp": 1735344000,
-    "nonce": "abc123def456"
+    "signature": "AUBvt7L2...(base64 BIP-322 signature)"
   }'
 ```
 

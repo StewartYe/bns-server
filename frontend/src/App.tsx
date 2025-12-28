@@ -182,8 +182,6 @@ function App() {
         address,
         message,
         signature,
-        timestamp,
-        nonce,
       };
 
       addLog(`Request: ${JSON.stringify(requestBody).substring(0, 150)}...`);

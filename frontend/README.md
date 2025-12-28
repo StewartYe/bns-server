@@ -42,8 +42,8 @@ The frontend calls `POST /v1/auth/login` with:
 {
   "address": "tb1q...",
   "message": "Sign in to bns.zone at 1735344000 with nonce abc123def456",
-  "signature": "base64...",
-  "timestamp": 1735344000,
-  "nonce": "abc123def456"
+  "signature": "base64..."
 }
 ```
+
+The server parses `timestamp` and `nonce` from the message, so they don't need to be sent separately.
