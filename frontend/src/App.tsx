@@ -1,16 +1,18 @@
 import { useState, useRef } from 'react';
+import { Buffer } from 'buffer';
+import * as bitcoin from 'bitcoinjs-lib';
 import { BNS_API_URL } from './config';
 
-// Declare UniSat wallet types
-declare global {
-  interface Window {
-    unisat?: {
-      requestAccounts: () => Promise<string[]>;
-      getAccounts: () => Promise<string[]>;
-      signMessage: (message: string, type?: string) => Promise<string>;
-    };
-  }
+// Polyfill Buffer for browser
+if (typeof window !== 'undefined') {
+  (window as unknown as { Buffer: typeof Buffer }).Buffer = Buffer;
 }
+
+// Pool address for listing transactions (testnet)
+const POOL_ADDRESS = 'tb1qkry5g4xm7gstpjczhdwycgxsvdflhf4d0nt7z3';
+
+// Bitcoin testnet network
+const network = bitcoin.networks.testnet;
 
 // Styles
 const styles = {
@@ -288,6 +290,182 @@ function App() {
     localStorage.removeItem('bns_session_id');
   };
 
+  const handleListName = async () => {
+    try {
+      setIsLoading(true);
+      addLog('Starting list name flow with PSBT...');
+
+      // Ensure wallet is connected
+      if (!btcAddress) {
+        addLog('Please connect wallet first', 'error');
+        return;
+      }
+
+      if (!window.unisat) {
+        addLog('UniSat wallet not found', 'error');
+        return;
+      }
+
+      // Test data
+      const testName = 'test.btc';
+      const testPriceSats = 100000; // 0.001 BTC
+      const listingAmountSats = 1000; // Small amount to send to pool
+      const feeRate = 2; // sat/vB
+
+      addLog(`Listing name: ${testName} for ${testPriceSats} sats`);
+      addLog(`Sending ${listingAmountSats} sats to pool address: ${POOL_ADDRESS}`);
+
+      try {
+        // Step 1: Get UTXOs from wallet
+        addLog('Step 1: Getting UTXOs from wallet...');
+        const utxos = await window.unisat.getBitcoinUtxos();
+        addLog(`Found ${utxos.length} UTXOs`);
+
+        if (utxos.length === 0) {
+          addLog('No UTXOs available', 'error');
+          return;
+        }
+
+        // Step 2: Get public key
+        addLog('Step 2: Getting public key...');
+        const publicKey = await window.unisat.getPublicKey();
+        addLog(`Public key: ${publicKey.substring(0, 20)}...`);
+
+        // Step 3: Build PSBT
+        addLog('Step 3: Building PSBT...');
+        const psbt = new bitcoin.Psbt({ network });
+
+        // Calculate total input and select UTXOs
+        const estimatedTxSize = 150; // Rough estimate for 1 input, 2 outputs
+        const estimatedFee = estimatedTxSize * feeRate;
+        const totalNeeded = listingAmountSats + estimatedFee;
+
+        let totalInput = 0;
+        const selectedUtxos: typeof utxos = [];
+
+        for (const utxo of utxos) {
+          if (totalInput >= totalNeeded) break;
+          selectedUtxos.push(utxo);
+          totalInput += utxo.satoshis;
+        }
+
+        if (totalInput < totalNeeded) {
+          addLog(`Insufficient funds: have ${totalInput}, need ${totalNeeded}`, 'error');
+          return;
+        }
+
+        addLog(`Selected ${selectedUtxos.length} UTXOs, total: ${totalInput} sats`);
+
+        // Add inputs
+        for (const utxo of selectedUtxos) {
+          psbt.addInput({
+            hash: utxo.txid,
+            index: utxo.vout,
+            witnessUtxo: {
+              script: Buffer.from(utxo.scriptPk, 'hex'),
+              value: BigInt(utxo.satoshis),
+            },
+          });
+        }
+
+        // Add output to pool address
+        const poolOutput = bitcoin.address.toOutputScript(POOL_ADDRESS, network);
+        psbt.addOutput({
+          script: poolOutput,
+          value: BigInt(listingAmountSats),
+        });
+
+        // Add change output back to sender
+        const changeAmount = totalInput - listingAmountSats - estimatedFee;
+        if (changeAmount > 546) { // Dust threshold
+          const changeOutput = bitcoin.address.toOutputScript(btcAddress, network);
+          psbt.addOutput({
+            script: changeOutput,
+            value: BigInt(changeAmount),
+          });
+        }
+
+        // Convert PSBT to hex
+        const psbtHex = psbt.toHex();
+        addLog(`PSBT created: ${psbtHex.substring(0, 50)}...`);
+
+        // Step 4: Sign PSBT with wallet
+        addLog('Step 4: Signing PSBT with wallet...');
+        const toSignInputs = selectedUtxos.map((_, index) => ({
+          index,
+          publicKey,
+        }));
+
+        const signedPsbtHex = await window.unisat.signPsbt(psbtHex, {
+          autoFinalized: false, // Keep as PSBT, server will finalize
+          toSignInputs,
+        });
+        addLog('PSBT signed successfully', 'success');
+        addLog(`Signed PSBT hex length: ${signedPsbtHex.length}`);
+
+        // Convert signed PSBT hex to base64 for server
+        const signedPsbtBase64 = Buffer.from(signedPsbtHex, 'hex').toString('base64');
+        addLog(`Signed PSBT base64 length: ${signedPsbtBase64.length}`);
+
+        // Step 5: Send to server
+        addLog('Step 5: Sending listing request to server...');
+        const requestBody = {
+          name: testName,
+          priceSats: testPriceSats,
+          sellerAddress: btcAddress,
+          psbt: signedPsbtBase64,
+        };
+
+        addLog(`POST ${BNS_API_URL}/v1/listings`);
+
+        const response = await fetch(`${BNS_API_URL}/v1/listings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          addLog(`Server error: ${errorText}`, 'error');
+        } else {
+          const listing = await response.json();
+          addLog('=== LISTING SUCCESS ===', 'success');
+          addLog(JSON.stringify(listing, null, 2), 'success');
+        }
+      } catch (walletError) {
+        addLog(`Error: ${walletError}`, 'error');
+      }
+    } catch (error) {
+      addLog(`List name error: ${error}`, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGetListings = async () => {
+    try {
+      setIsLoading(true);
+      addLog(`GET ${BNS_API_URL}/v1/listings`);
+
+      const response = await fetch(`${BNS_API_URL}/v1/listings`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      addLog('=== LISTINGS ===', 'success');
+      addLog(JSON.stringify(data, null, 2), 'success');
+    } catch (error) {
+      addLog(`Get listings error: ${error}`, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -375,6 +553,29 @@ function App() {
             onClick={handleClear}
           >
             Clear
+          </button>
+        </div>
+
+        <div style={{ marginTop: '20px', borderTop: '1px solid #333', paddingTop: '20px' }}>
+          <div style={styles.label}>Listing Actions</div>
+          <button
+            style={{
+              ...styles.button,
+              background: '#6c5ce7',
+              ...(isLoading ? styles.buttonDisabled : {}),
+            }}
+            onClick={handleListName}
+            disabled={isLoading || !btcAddress}
+          >
+            List Test Name
+          </button>
+
+          <button
+            style={styles.buttonSecondary}
+            onClick={handleGetListings}
+            disabled={isLoading}
+          >
+            Get Listings
           </button>
         </div>
       </div>

@@ -3,6 +3,7 @@
 //! Business logic services:
 //! - AuthService: BIP-322 authentication and session management
 //! - NameService: Name resolution, search, details
+//! - ListingService: PSBT-based name listing with confirmation tracking
 //! - TradingService: List, delist, buy operations
 //! - MarketService: Rankings, statistics
 //! - UserService: Inventory, history
@@ -11,6 +12,7 @@
 
 mod auth;
 mod event;
+mod listing;
 mod market;
 mod name;
 mod shoutout;
@@ -19,6 +21,7 @@ mod user;
 
 pub use auth::*;
 pub use event::*;
+pub use listing::*;
 pub use market::*;
 pub use name::*;
 pub use shoutout::*;

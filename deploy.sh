@@ -33,7 +33,7 @@ gcloud run deploy ${SERVICE_NAME} \
     --vpc-connector=${CONNECTOR_NAME} \
     --vpc-egress=private-ranges-only \
     --add-cloudsql-instances=${CLOUD_SQL_INSTANCE} \
-    --set-env-vars="ORD_BACKEND_URL=http://10.128.15.243" \
+    --set-env-vars="ORD_BACKEND_URL=http://10.128.15.243,BITCOIND_URL=http://omnity:k2BZNDQ4s71dKXa44pYaA5cTENtGzoPkI0JwqG0uvkY@10.128.15.238:8332" \
     --set-secrets="DATABASE_URL=bns-testnet-database-url:latest" \
     --port=8080 \
     --cpu=1 \

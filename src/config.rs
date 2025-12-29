@@ -13,6 +13,9 @@ pub struct Config {
     /// PostgreSQL URL (required)
     pub database_url: String,
 
+    /// Bitcoin Core RPC URL (required for broadcasting transactions)
+    pub bitcoind_url: String,
+
     /// Ord indexer URL (required for resolve_rune/resolve_address)
     pub ord_url: Option<String>,
 
@@ -26,6 +29,9 @@ impl Config {
         let database_url = env::var("DATABASE_URL")
             .map_err(|_| ConfigError::Missing("DATABASE_URL"))?;
 
+        let bitcoind_url = env::var("BITCOIND_URL")
+            .map_err(|_| ConfigError::Missing("BITCOIND_URL"))?;
+
         Ok(Self {
             port: env::var("PORT")
                 .unwrap_or_else(|_| "8080".to_string())
@@ -33,6 +39,8 @@ impl Config {
                 .map_err(|_| ConfigError::InvalidPort)?,
 
             database_url,
+
+            bitcoind_url,
 
             ord_url: env::var("ORD_URL")
                 .or_else(|_| env::var("ORD_BACKEND_URL"))

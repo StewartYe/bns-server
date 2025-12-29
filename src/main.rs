@@ -3,6 +3,7 @@
 //! Main entry point.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::{Any, CorsLayer};
@@ -12,7 +13,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use bns_server::{
     api,
     config::Config,
-    service::{AuthConfig, AuthService},
+    infra::{BlockchainClientImpl, PostgresClientImpl},
+    service::{AuthConfig, AuthService, DynListingService, ListingService},
     state::AppState,
 };
 
@@ -60,8 +62,25 @@ async fn main() -> anyhow::Result<()> {
     };
     let auth_service = Arc::new(AuthService::new(pool.clone(), auth_config));
 
+    // Initialize blockchain client
+    let ord_url = config.ord_url.as_deref().unwrap_or("http://localhost:80");
+    let blockchain_client = Arc::new(BlockchainClientImpl::new(ord_url, &config.bitcoind_url));
+    tracing::info!("Bitcoin RPC URL: {}", config.bitcoind_url);
+
+    // Initialize postgres client wrapper
+    let postgres_client = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
+
+    // Initialize listing service
+    let listing_service = Arc::new(ListingService::new(blockchain_client, postgres_client));
+
+    // Start background task for confirmation updates
+    let listing_service_bg = listing_service.clone();
+    tokio::spawn(async move {
+        confirmation_update_task(listing_service_bg).await;
+    });
+
     // Create application state
-    let state = AppState::new(config.clone(), http_client, auth_service, pool);
+    let state = AppState::new(config.clone(), http_client, auth_service, listing_service, pool);
 
     // Build router
     let app = api::build_router(state)
@@ -81,4 +100,25 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Background task to update listing confirmations every minute
+async fn confirmation_update_task(listing_service: DynListingService) {
+    let interval = Duration::from_secs(60);
+    tracing::info!("Starting confirmation update task (interval: {:?})", interval);
+
+    loop {
+        tokio::time::sleep(interval).await;
+
+        match listing_service.update_confirmations().await {
+            Ok(count) => {
+                if count > 0 {
+                    tracing::info!("Updated confirmations for {} listings", count);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to update confirmations: {:?}", e);
+            }
+        }
+    }
 }
