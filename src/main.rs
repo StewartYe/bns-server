@@ -13,7 +13,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use bns_server::{
     api,
     config::Config,
-    infra::{BlockchainClientImpl, PostgresClientImpl},
+    infra::{BlockchainClientImpl, PostgresClientImpl, RedisClientImpl},
     service::{AuthConfig, AuthService, DynListingService, ListingService},
     state::AppState,
 };
@@ -32,7 +32,11 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let config = Config::from_env()?;
 
-    tracing::info!("Starting BNS Server on port {}", config.port);
+    tracing::info!(
+        "Starting BNS Server on port {} (network: {})",
+        config.port,
+        config.network
+    );
 
     if let Some(ord_url) = &config.ord_url {
         tracing::info!("Ord backend URL: {}", ord_url);
@@ -56,6 +60,11 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("Migrations complete");
 
+    // Connect to Redis
+    tracing::info!("Connecting to Redis...");
+    let redis_client = Arc::new(RedisClientImpl::new(&config.redis, config.network).await?);
+    tracing::info!("Connected to Redis");
+
     // Initialize auth service
     let auth_config = AuthConfig {
         session_ttl_secs: config.session_ttl_secs,
@@ -71,7 +80,11 @@ async fn main() -> anyhow::Result<()> {
     let postgres_client = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
 
     // Initialize listing service
-    let listing_service = Arc::new(ListingService::new(blockchain_client, postgres_client));
+    let listing_service = Arc::new(ListingService::new(
+        blockchain_client,
+        postgres_client,
+        redis_client.clone(),
+    ));
 
     // Start background task for confirmation updates
     let listing_service_bg = listing_service.clone();
@@ -80,7 +93,14 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Create application state
-    let state = AppState::new(config.clone(), http_client, auth_service, listing_service, pool);
+    let state = AppState::new(
+        config.clone(),
+        http_client,
+        auth_service,
+        listing_service,
+        redis_client,
+        pool,
+    );
 
     // Build router
     let app = api::build_router(state)

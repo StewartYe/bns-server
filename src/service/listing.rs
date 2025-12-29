@@ -11,20 +11,26 @@ use crate::domain::{
     Listing, ListingInfo, ListingStatus, ListNameRequest, ListNameResponse, ListedNamesResponse,
     FINALIZE_THRESHOLD,
 };
-use crate::error::{AppError, Result};
-use crate::infra::{DynBlockchainClient, DynPostgresClient};
+use crate::error::Result;
+use crate::infra::{DynBlockchainClient, DynPostgresClient, DynRedisClient, ListingMeta};
 
 /// Listing service
 pub struct ListingService {
     blockchain: DynBlockchainClient,
     postgres: DynPostgresClient,
+    redis: DynRedisClient,
 }
 
 impl ListingService {
-    pub fn new(blockchain: DynBlockchainClient, postgres: DynPostgresClient) -> Self {
+    pub fn new(
+        blockchain: DynBlockchainClient,
+        postgres: DynPostgresClient,
+        redis: DynRedisClient,
+    ) -> Self {
         Self {
             blockchain,
             postgres,
+            redis,
         }
     }
 
@@ -68,6 +74,18 @@ impl ListingService {
         };
 
         self.postgres.create_listing(&listing).await?;
+
+        // Add to Redis new_list ranking
+        let listing_meta = ListingMeta {
+            name: request.name.clone(),
+            price_sats: request.price_sats,
+            seller_address: request.seller_address.clone(),
+            confirmations: 0,
+            listed_at: now.timestamp(),
+        };
+        if let Err(e) = self.redis.add_new_listing(&listing_meta).await {
+            tracing::warn!("Failed to add listing to Redis: {:?}", e);
+        }
 
         tracing::info!(
             "Created listing {} for name '{}' with tx_id {}",
@@ -141,6 +159,19 @@ impl ListingService {
                             .update_listing_confirmations(&listing.id, confirmations)
                             .await?;
 
+                        // Update confirmations in Redis
+                        if let Err(e) = self
+                            .redis
+                            .update_listing_confirmations(&listing.name, confirmations)
+                            .await
+                        {
+                            tracing::warn!(
+                                "Failed to update Redis confirmations for {}: {:?}",
+                                listing.name,
+                                e
+                            );
+                        }
+
                         updated_count += 1;
 
                         // Check if we've reached the threshold
@@ -179,6 +210,11 @@ impl ListingService {
         }
 
         Ok(updated_count)
+    }
+
+    /// Get newest listings from Redis (for real-time display)
+    pub async fn get_new_listings(&self, count: usize) -> Result<Vec<ListingMeta>> {
+        self.redis.get_new_listings(count).await
     }
 }
 

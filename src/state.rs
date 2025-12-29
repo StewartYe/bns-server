@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::infra::DynRedisClient;
 use crate::service::{DynAuthService, DynListingService};
 
 /// Application state shared across handlers
@@ -21,6 +22,9 @@ pub struct AppState {
     /// Listing service
     pub listing_service: DynListingService,
 
+    /// Redis client
+    pub redis_client: DynRedisClient,
+
     /// Database pool
     pub db_pool: sqlx::PgPool,
 }
@@ -32,6 +36,7 @@ impl AppState {
         http_client: reqwest::Client,
         auth_service: DynAuthService,
         listing_service: DynListingService,
+        redis_client: DynRedisClient,
         db_pool: sqlx::PgPool,
     ) -> Self {
         Self {
@@ -39,6 +44,7 @@ impl AppState {
             http_client,
             auth_service,
             listing_service,
+            redis_client,
             db_pool,
         }
     }

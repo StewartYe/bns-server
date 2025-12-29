@@ -2,6 +2,7 @@
 set -e
 
 PROJECT_ID="octopus-prod"
+PROJECT_NUMBER="219952077564"
 REGION="us-central1"
 SERVICE_NAME="bns-server-testnet"
 CONNECTOR_NAME="bns-connector"
@@ -9,8 +10,18 @@ REPO_NAME="bns"
 IMAGE_TAG="latest"
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${SERVICE_NAME}:${IMAGE_TAG}"
 
+# Network configuration (testnet or mainnet)
+NETWORK="testnet"
+
 # Cloud SQL instance connection name
 CLOUD_SQL_INSTANCE="${PROJECT_ID}:${REGION}:octopus"
+
+# Redis/Valkey configuration (GCP Memorystore)
+REDIS_HOST="10.128.15.193"
+REDIS_PORT="6379"
+REDIS_TLS="true"
+REDIS_USE_IAM="true"
+REDIS_CA_FILE_PATH="/usr/local/share/ca-certificates/valkey-ca.crt"
 
 # Create Artifact Registry repository (if not exists)
 echo "Creating Artifact Registry repository..."
@@ -25,7 +36,7 @@ echo "Building image..."
 gcloud builds submit --tag ${IMAGE_URI} --project=${PROJECT_ID}
 
 # Deploy to Cloud Run
-echo "Deploying to Cloud Run..."
+echo "Deploying to Cloud Run (${NETWORK})..."
 gcloud run deploy ${SERVICE_NAME} \
     --image=${IMAGE_URI} \
     --platform=managed \
@@ -33,7 +44,7 @@ gcloud run deploy ${SERVICE_NAME} \
     --vpc-connector=${CONNECTOR_NAME} \
     --vpc-egress=private-ranges-only \
     --add-cloudsql-instances=${CLOUD_SQL_INSTANCE} \
-    --set-env-vars="ORD_BACKEND_URL=http://10.128.15.243,BITCOIND_URL=http://omnity:k2BZNDQ4s71dKXa44pYaA5cTENtGzoPkI0JwqG0uvkY@10.128.15.238:8332" \
+    --set-env-vars="NETWORK=${NETWORK},ORD_BACKEND_URL=http://10.128.15.243,BITCOIND_URL=http://omnity:k2BZNDQ4s71dKXa44pYaA5cTENtGzoPkI0JwqG0uvkY@10.128.15.238:8332,REDIS_HOST=${REDIS_HOST},REDIS_PORT=${REDIS_PORT},REDIS_TLS=${REDIS_TLS},REDIS_USE_IAM=${REDIS_USE_IAM},REDIS_CA_FILE_PATH=${REDIS_CA_FILE_PATH}" \
     --set-secrets="DATABASE_URL=bns-testnet-database-url:latest" \
     --port=8080 \
     --cpu=1 \
@@ -41,6 +52,7 @@ gcloud run deploy ${SERVICE_NAME} \
     --min-instances=0 \
     --max-instances=10 \
     --allow-unauthenticated \
+    --service-account=${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
     --project=${PROJECT_ID}
 
 echo ""

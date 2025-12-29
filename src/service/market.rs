@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::ListingDisplay;
 use crate::error::Result;
-use crate::infra::{keys, DynPostgresClient, DynRedisClient};
+use crate::infra::{DynPostgresClient, DynRedisClient};
 
 /// Ranking types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,16 +33,17 @@ pub enum RankingType {
 }
 
 impl RankingType {
-    pub fn redis_key(&self) -> &'static str {
+    /// Get the key suffix for this ranking type
+    pub fn key_suffix(&self) -> &'static str {
         match self {
-            RankingType::TopEarners24h => keys::RANK_24H_WINNERS,
-            RankingType::NewList => keys::RANK_NEW_LIST,
-            RankingType::LastSold => keys::RANK_LAST_SOLD,
-            RankingType::Active1h => keys::RANK_1H_ACTIVE,
-            RankingType::Active24h => keys::RANK_24H_ACTIVE,
-            RankingType::TopSell24h => keys::RANK_24H_TOP_SELL,
-            RankingType::BestDiscount => keys::RANK_BEST_DISCOUNT,
-            RankingType::BestBargain => keys::RANK_BEST_BARGAIN,
+            RankingType::TopEarners24h => "rank:24h_winners",
+            RankingType::NewList => "rank:new_list",
+            RankingType::LastSold => "rank:last_sold",
+            RankingType::Active1h => "rank:1h_active",
+            RankingType::Active24h => "rank:24h_active",
+            RankingType::TopSell24h => "rank:24h_top_sell",
+            RankingType::BestDiscount => "rank:best_discount",
+            RankingType::BestBargain => "rank:best_bargain",
         }
     }
 }
