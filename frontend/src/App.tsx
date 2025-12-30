@@ -1,7 +1,14 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Buffer } from 'buffer';
 import * as bitcoin from 'bitcoinjs-lib';
 import { BNS_API_URL } from './config';
+
+// WebSocket URL (derive from API URL)
+const getWsUrl = () => {
+  const url = new URL(BNS_API_URL);
+  const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${url.host}/v1/ws/connect`;
+};
 
 // Polyfill Buffer for browser
 if (typeof window !== 'undefined') {
@@ -91,6 +98,14 @@ const styles = {
   },
 };
 
+interface ListingMeta {
+  name: string;
+  price_sats: number;
+  seller_address: string;
+  confirmations: number;
+  listed_at: number;
+}
+
 function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -102,6 +117,68 @@ function App() {
     is_new_user: boolean;
   } | null>(null);
   const logsRef = useRef<string[]>([]);
+
+  // List name form state
+  const [listNameInput, setListNameInput] = useState('');
+  const [listPriceInput, setListPriceInput] = useState('100000');
+
+  // New listings leaderboard
+  const [newListings, setNewListings] = useState<ListingMeta[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // WebSocket connection for real-time new listings
+  useEffect(() => {
+    const connectWebSocket = () => {
+      const wsUrl = getWsUrl();
+      console.log('Connecting to WebSocket:', wsUrl);
+
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('WebSocket connected, subscribing to new-listings...');
+        // Subscribe to new-listings channel
+        ws.send(JSON.stringify({
+          type: 'subscribe',
+          channel: 'new-listings'
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          // Handle different message types
+          if (data.type === 'subscribed') {
+            console.log('Subscribed to:', data.channel);
+          } else if (data.type === 'snapshot' || data.type === 'update') {
+            // Server sends { type: "snapshot" | "update", channel: "new-listings", data: listings }
+            if (data.channel === 'new-listings' && Array.isArray(data.data)) {
+              setNewListings(data.data);
+            }
+          }
+        } catch (e) {
+          console.error('Failed to parse WebSocket message:', e);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket disconnected, reconnecting in 3s...');
+        setTimeout(connectWebSocket, 3000);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   const addLog = (message: string, type: 'info' | 'error' | 'success' = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
@@ -306,13 +383,23 @@ function App() {
         return;
       }
 
-      // Test data
-      const testName = 'test.btc';
-      const testPriceSats = 100000; // 0.001 BTC
+      // Get form input values
+      const nameToList = listNameInput.trim();
+      const priceSats = parseInt(listPriceInput, 10);
+
+      if (!nameToList) {
+        addLog('Please enter a name to list', 'error');
+        return;
+      }
+      if (isNaN(priceSats) || priceSats <= 0) {
+        addLog('Please enter a valid price in sats', 'error');
+        return;
+      }
+
       const listingAmountSats = 1000; // Small amount to send to pool
       const feeRate = 2; // sat/vB
 
-      addLog(`Listing name: ${testName} for ${testPriceSats} sats`);
+      addLog(`Listing name: ${nameToList} for ${priceSats} sats`);
       addLog(`Sending ${listingAmountSats} sats to pool address: ${POOL_ADDRESS}`);
 
       try {
@@ -410,8 +497,8 @@ function App() {
         // Step 5: Send to server
         addLog('Step 5: Sending listing request to server...');
         const requestBody = {
-          name: testName,
-          priceSats: testPriceSats,
+          name: nameToList,
+          priceSats: priceSats,
           sellerAddress: btcAddress,
           psbt: signedPsbtBase64,
         };
@@ -557,7 +644,40 @@ function App() {
         </div>
 
         <div style={{ marginTop: '20px', borderTop: '1px solid #333', paddingTop: '20px' }}>
-          <div style={styles.label}>Listing Actions</div>
+          <div style={styles.label}>List a Name</div>
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="Name (e.g. myname.btc)"
+              value={listNameInput}
+              onChange={(e) => setListNameInput(e.target.value)}
+              style={{
+                background: '#222',
+                border: '1px solid #444',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#fff',
+                fontSize: '1rem',
+                flex: '1',
+                minWidth: '150px',
+              }}
+            />
+            <input
+              type="number"
+              placeholder="Price (sats)"
+              value={listPriceInput}
+              onChange={(e) => setListPriceInput(e.target.value)}
+              style={{
+                background: '#222',
+                border: '1px solid #444',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#fff',
+                fontSize: '1rem',
+                width: '120px',
+              }}
+            />
+          </div>
           <button
             style={{
               ...styles.button,
@@ -567,7 +687,7 @@ function App() {
             onClick={handleListName}
             disabled={isLoading || !btcAddress}
           >
-            List Test Name
+            List Name
           </button>
 
           <button
@@ -577,6 +697,55 @@ function App() {
           >
             Get Listings
           </button>
+        </div>
+      </div>
+
+      {/* New Listings Leaderboard */}
+      <div style={styles.card}>
+        <div style={styles.label}>New Listings (Top 20)</div>
+        <div style={{
+          background: '#111',
+          borderRadius: '8px',
+          overflow: 'hidden',
+        }}>
+          {newListings.length === 0 ? (
+            <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+              No listings yet
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#1a1a1a' }}>
+                  <th style={{ padding: '12px', textAlign: 'left', color: '#888', fontWeight: 'normal' }}>#</th>
+                  <th style={{ padding: '12px', textAlign: 'left', color: '#888', fontWeight: 'normal' }}>Name</th>
+                  <th style={{ padding: '12px', textAlign: 'right', color: '#888', fontWeight: 'normal' }}>Price (sats)</th>
+                  <th style={{ padding: '12px', textAlign: 'center', color: '#888', fontWeight: 'normal' }}>Confirmations</th>
+                </tr>
+              </thead>
+              <tbody>
+                {newListings.map((listing, index) => (
+                  <tr key={listing.name} style={{ borderTop: '1px solid #222' }}>
+                    <td style={{ padding: '12px', color: '#666' }}>{index + 1}</td>
+                    <td style={{ padding: '12px', fontFamily: 'monospace', color: '#fff' }}>{listing.name}</td>
+                    <td style={{ padding: '12px', textAlign: 'right', color: '#f7931a', fontFamily: 'monospace' }}>
+                      {listing.price_sats.toLocaleString()}
+                    </td>
+                    <td style={{ padding: '12px', textAlign: 'center' }}>
+                      <span style={{
+                        background: listing.confirmations >= 6 ? '#51cf66' : listing.confirmations > 0 ? '#ffd43b' : '#ff6b6b',
+                        color: '#000',
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        fontSize: '0.85rem',
+                      }}>
+                        {listing.confirmations}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 

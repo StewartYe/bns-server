@@ -34,6 +34,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/listings", get(listing::get_listed_names))
         // Real-time endpoints
         .route("/v1/listings/new", get(ws::get_new_listings))
-        .route("/v1/ws/new-listings", get(ws::ws_new_listings))
+        .route("/v1/ws/connect", get(ws::ws_handler))
         .with_state(state)
 }

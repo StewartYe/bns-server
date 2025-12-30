@@ -83,8 +83,10 @@ impl ListingService {
             confirmations: 0,
             listed_at: now.timestamp(),
         };
-        if let Err(e) = self.redis.add_new_listing(&listing_meta).await {
-            tracing::warn!("Failed to add listing to Redis: {:?}", e);
+        tracing::info!("Adding listing to Redis: {:?}", listing_meta);
+        match self.redis.add_new_listing(&listing_meta).await {
+            Ok(_) => tracing::info!("Successfully added listing to Redis new_list"),
+            Err(e) => tracing::error!("Failed to add listing to Redis: {:?}", e),
         }
 
         tracing::info!(
