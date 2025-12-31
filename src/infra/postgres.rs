@@ -33,6 +33,7 @@ pub trait PostgresClient: Send + Sync {
     async fn update_listing_status(&self, name: &str, status: ListingStatus) -> Result<()>;
     async fn update_listing_price(&self, name: &str, price_sats: u64) -> Result<()>;
     async fn update_listing_confirmations(&self, id: &str, confirmations: i32) -> Result<()>;
+    async fn update_listing_confirmations_by_name(&self, name: &str, confirmations: i32) -> Result<()>;
     async fn get_pending_confirmations(&self, threshold: i32) -> Result<Vec<Listing>>;
 
     // Transaction history
@@ -254,6 +255,16 @@ impl PostgresClient for PostgresClientImpl {
         sqlx::query("UPDATE listings SET confirmations = $1, updated_at = NOW() WHERE id = $2")
             .bind(confirmations)
             .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn update_listing_confirmations_by_name(&self, name: &str, confirmations: i32) -> Result<()> {
+        sqlx::query("UPDATE listings SET confirmations = $1, updated_at = NOW() WHERE name = $2")
+            .bind(confirmations)
+            .bind(name)
             .execute(&self.pool)
             .await?;
 

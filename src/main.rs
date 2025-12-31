@@ -86,6 +86,18 @@ async fn main() -> anyhow::Result<()> {
         redis_client.clone(),
     ));
 
+    // Sync pending listings from PostgreSQL to Redis queue on startup
+    match listing_service.init_pending_queue().await {
+        Ok(count) => {
+            if count > 0 {
+                tracing::info!("Initialized pending queue with {} listings", count);
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize pending queue: {:?}", e);
+        }
+    }
+
     // Start background task for confirmation updates
     let listing_service_bg = listing_service.clone();
     tokio::spawn(async move {

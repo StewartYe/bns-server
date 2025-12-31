@@ -49,6 +49,11 @@ impl KeyBuilder {
         self.key(&format!("rank:meta:{}", name))
     }
 
+    // Pending confirmations queue (names waiting for confirmation threshold)
+    pub fn pending_confirmations(&self) -> String {
+        self.key("pending_confirmations")
+    }
+
     // Pub/Sub channels
     pub fn channel_events(&self) -> String {
         self.key("events")
@@ -67,6 +72,8 @@ pub struct ListingMeta {
     pub seller_address: String,
     pub confirmations: i32,
     pub listed_at: i64, // Unix timestamp
+    #[serde(default)]
+    pub tx_id: Option<String>,
 }
 
 /// Redis client abstraction
@@ -110,6 +117,17 @@ pub trait RedisClient: Send + Sync {
 
     /// Get top N newest listings
     async fn get_new_listings(&self, count: usize) -> Result<Vec<ListingMeta>>;
+
+    // Pending confirmations queue operations
+
+    /// Add a listing to the pending confirmations queue
+    async fn add_pending_confirmation(&self, meta: &ListingMeta) -> Result<()>;
+
+    /// Get all pending confirmations (names waiting for threshold)
+    async fn get_pending_confirmations(&self) -> Result<Vec<ListingMeta>>;
+
+    /// Remove a listing from the pending confirmations queue
+    async fn remove_pending_confirmation(&self, name: &str) -> Result<()>;
 }
 
 /// Redis client implementation with TLS support and automatic token refresh
@@ -402,6 +420,41 @@ impl RedisClient for RedisClientImpl {
         }
 
         Ok(listings)
+    }
+
+    // Pending confirmations queue operations
+
+    async fn add_pending_confirmation(&self, meta: &ListingMeta) -> Result<()> {
+        let key = self.keys.pending_confirmations();
+        let meta_json = serde_json::to_string(meta)?;
+
+        // Use HSET with name as field, meta as value
+        self.hset(&key, &meta.name, &meta_json).await?;
+
+        tracing::info!("Added {} to pending confirmations queue", meta.name);
+        Ok(())
+    }
+
+    async fn get_pending_confirmations(&self) -> Result<Vec<ListingMeta>> {
+        let key = self.keys.pending_confirmations();
+        let entries = self.hgetall(&key).await?;
+
+        let mut listings = Vec::with_capacity(entries.len());
+        for (_name, meta_json) in entries {
+            if let Ok(meta) = serde_json::from_str::<ListingMeta>(&meta_json) {
+                listings.push(meta);
+            }
+        }
+
+        Ok(listings)
+    }
+
+    async fn remove_pending_confirmation(&self, name: &str) -> Result<()> {
+        let key = self.keys.pending_confirmations();
+        self.hdel(&key, name).await?;
+
+        tracing::info!("Removed {} from pending confirmations queue", name);
+        Ok(())
     }
 }
 

@@ -34,6 +34,50 @@ impl ListingService {
         }
     }
 
+    /// Initialize pending confirmations queue from PostgreSQL
+    ///
+    /// This should be called on startup to sync any pending listings
+    /// that may have been created before the Redis queue was used.
+    pub async fn init_pending_queue(&self) -> Result<u32> {
+        // Get all pending listings from PostgreSQL
+        let pending = self
+            .postgres
+            .get_pending_confirmations(FINALIZE_THRESHOLD)
+            .await?;
+
+        if pending.is_empty() {
+            tracing::info!("No pending listings to sync to Redis queue");
+            return Ok(0);
+        }
+
+        tracing::info!("Syncing {} pending listings to Redis queue", pending.len());
+
+        let mut synced = 0u32;
+        for listing in pending {
+            let meta = ListingMeta {
+                name: listing.name.clone(),
+                price_sats: listing.price_sats,
+                seller_address: listing.seller_address.clone(),
+                confirmations: listing.confirmations,
+                listed_at: listing.listed_at.timestamp(),
+                tx_id: listing.tx_id.clone(),
+            };
+
+            if let Err(e) = self.redis.add_pending_confirmation(&meta).await {
+                tracing::warn!(
+                    "Failed to sync listing '{}' to pending queue: {:?}",
+                    listing.name,
+                    e
+                );
+            } else {
+                synced += 1;
+            }
+        }
+
+        tracing::info!("Synced {} pending listings to Redis queue", synced);
+        Ok(synced)
+    }
+
     /// Check if a string looks like a Bitcoin txid (64 hex characters)
     fn is_txid(s: &str) -> bool {
         s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
@@ -82,11 +126,18 @@ impl ListingService {
             seller_address: request.seller_address.clone(),
             confirmations: 0,
             listed_at: now.timestamp(),
+            tx_id: Some(tx_id.clone()),
         };
         tracing::info!("Adding listing to Redis: {:?}", listing_meta);
         match self.redis.add_new_listing(&listing_meta).await {
             Ok(_) => tracing::info!("Successfully added listing to Redis new_list"),
             Err(e) => tracing::error!("Failed to add listing to Redis: {:?}", e),
+        }
+
+        // Add to pending confirmations queue for monitoring
+        match self.redis.add_pending_confirmation(&listing_meta).await {
+            Ok(_) => tracing::info!("Successfully added listing to pending confirmations queue"),
+            Err(e) => tracing::error!("Failed to add listing to pending queue: {:?}", e),
         }
 
         tracing::info!(
@@ -141,35 +192,50 @@ impl ListingService {
     /// Update confirmations for pending listings
     ///
     /// Called by background task every minute.
-    /// When confirmations >= FINALIZE_THRESHOLD, call bns_canister.list_name (placeholder).
+    /// Uses Redis pending queue instead of PostgreSQL for efficiency.
+    /// When confirmations >= FINALIZE_THRESHOLD:
+    /// - Remove from pending queue
+    /// - Call bns_canister.list_name (placeholder)
     pub async fn update_confirmations(&self) -> Result<u32> {
-        let pending = self
-            .postgres
-            .get_pending_confirmations(FINALIZE_THRESHOLD)
-            .await?;
+        // Get pending confirmations from Redis queue
+        let pending = self.redis.get_pending_confirmations().await?;
+
+        if pending.is_empty() {
+            return Ok(0);
+        }
+
+        tracing::debug!("Checking confirmations for {} pending listings", pending.len());
 
         let mut updated_count = 0u32;
 
-        for listing in pending {
-            if let Some(tx_id) = &listing.tx_id {
+        for listing_meta in pending {
+            if let Some(tx_id) = &listing_meta.tx_id {
                 match self.blockchain.get_transaction_confirmations(tx_id).await {
                     Ok(Some(confirmations)) => {
                         let confirmations = confirmations as i32;
 
-                        // Update confirmations in database
-                        self.postgres
-                            .update_listing_confirmations(&listing.id, confirmations)
-                            .await?;
-
-                        // Update confirmations in Redis
+                        // Update confirmations in Redis (for display)
                         if let Err(e) = self
                             .redis
-                            .update_listing_confirmations(&listing.name, confirmations)
+                            .update_listing_confirmations(&listing_meta.name, confirmations)
                             .await
                         {
                             tracing::warn!(
                                 "Failed to update Redis confirmations for {}: {:?}",
-                                listing.name,
+                                listing_meta.name,
+                                e
+                            );
+                        }
+
+                        // Update confirmations in PostgreSQL
+                        if let Err(e) = self
+                            .postgres
+                            .update_listing_confirmations_by_name(&listing_meta.name, confirmations)
+                            .await
+                        {
+                            tracing::warn!(
+                                "Failed to update DB confirmations for {}: {:?}",
+                                listing_meta.name,
                                 e
                             );
                         }
@@ -177,27 +243,53 @@ impl ListingService {
                         updated_count += 1;
 
                         // Check if we've reached the threshold
-                        if confirmations >= FINALIZE_THRESHOLD
-                            && listing.confirmations < FINALIZE_THRESHOLD
-                        {
+                        if confirmations >= FINALIZE_THRESHOLD {
                             tracing::info!(
-                                "Listing {} reached {} confirmations, calling bns_canister.list_name",
-                                listing.id,
-                                confirmations
+                                "Listing '{}' reached {} confirmations (threshold: {})",
+                                listing_meta.name,
+                                confirmations,
+                                FINALIZE_THRESHOLD
                             );
 
+                            // Remove from pending queue - no longer need to monitor
+                            if let Err(e) = self
+                                .redis
+                                .remove_pending_confirmation(&listing_meta.name)
+                                .await
+                            {
+                                tracing::error!(
+                                    "Failed to remove {} from pending queue: {:?}",
+                                    listing_meta.name,
+                                    e
+                                );
+                            }
+
+                            // Update status to active in PostgreSQL
+                            if let Err(e) = self
+                                .postgres
+                                .update_listing_status(&listing_meta.name, ListingStatus::Active)
+                                .await
+                            {
+                                tracing::error!(
+                                    "Failed to update listing status for {}: {:?}",
+                                    listing_meta.name,
+                                    e
+                                );
+                            }
+
                             // TODO: Call bns_canister.list_name here
-                            // For now, just update status to active
-                            self.postgres
-                                .update_listing_status(&listing.name, ListingStatus::Active)
-                                .await?;
+                            // This will be implemented when bns-canister is deployed
+                            tracing::info!(
+                                "[PLACEHOLDER] Would call bns_canister.list_name for '{}'",
+                                listing_meta.name
+                            );
                         }
                     }
                     Ok(None) => {
                         tracing::debug!(
-                            "Transaction {} not found for listing {}",
+                            "Transaction {} not found for listing '{}'",
                             tx_id,
-                            listing.id
+                            listing_meta.name
                         );
                     }
                     Err(e) => {
@@ -208,6 +300,13 @@ impl ListingService {
                         );
                     }
                 }
+            } else {
+                tracing::warn!(
+                    "Listing '{}' has no tx_id, removing from pending queue",
+                    listing_meta.name
+                );
+                // Remove invalid entries from queue
+                let _ = self.redis.remove_pending_confirmation(&listing_meta.name).await;
             }
         }
 
