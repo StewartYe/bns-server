@@ -37,6 +37,7 @@ impl Default for AuthConfig {
 #[derive(Debug, FromRow)]
 struct UserRow {
     btc_address: String,
+    primary_name: Option<String>,
     created_at: DateTime<Utc>,
     last_seen_at: DateTime<Utc>,
 }
@@ -45,6 +46,7 @@ impl From<UserRow> for User {
     fn from(row: UserRow) -> Self {
         User {
             btc_address: row.btc_address,
+            primary_name: row.primary_name,
             created_at: row.created_at,
             last_seen_at: row.last_seen_at,
         }
@@ -140,7 +142,7 @@ impl AuthService {
     async fn find_or_create_user(&self, btc_address: &str) -> Result<(User, bool)> {
         let existing: Option<UserRow> = sqlx::query_as(
             r#"
-            SELECT btc_address, created_at, last_seen_at
+            SELECT btc_address, primary_name, created_at, last_seen_at
             FROM users
             WHERE btc_address = $1
             "#,
@@ -172,17 +174,19 @@ impl AuthService {
                 let now = Utc::now();
                 let user = User {
                     btc_address: btc_address.to_string(),
+                    primary_name: None,
                     created_at: now,
                     last_seen_at: now,
                 };
 
                 sqlx::query(
                     r#"
-                    INSERT INTO users (btc_address, created_at, last_seen_at)
-                    VALUES ($1, $2, $3)
+                    INSERT INTO users (btc_address, primary_name, created_at, last_seen_at)
+                    VALUES ($1, $2, $3, $4)
                     "#,
                 )
                 .bind(&user.btc_address)
+                .bind(&user.primary_name)
                 .bind(user.created_at)
                 .bind(user.last_seen_at)
                 .execute(&self.pool)

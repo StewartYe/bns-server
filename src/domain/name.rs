@@ -72,3 +72,44 @@ pub struct NameSummary {
     pub is_listed: bool,
     pub price_sats: Option<u64>,
 }
+
+/// Name metadata stored in database
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NameMetadata {
+    /// The Rune name (max 64 characters)
+    pub name: String,
+    /// Current owner's Bitcoin address
+    pub owner_address: String,
+    /// Description of the name
+    pub description: Option<String>,
+    /// Associated URL
+    pub url: Option<String>,
+    /// Twitter handle (without @)
+    pub twitter: Option<String>,
+    /// Contact email
+    pub email: Option<String>,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Last update timestamp
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Request to update name metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateNameMetadataRequest {
+    /// Description of the name
+    pub description: Option<String>,
+    /// Associated URL
+    pub url: Option<String>,
+    /// Twitter handle (without @)
+    pub twitter: Option<String>,
+    /// Contact email
+    pub email: Option<String>,
+}
+
+/// Request to set primary name
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetPrimaryNameRequest {
+    /// The name to set as primary
+    pub name: String,
+}

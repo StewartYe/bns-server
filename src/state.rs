@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::infra::DynRedisClient;
+use crate::infra::{DynPostgresClient, DynRedisClient};
 use crate::service::{DynAuthService, DynListingService};
 
 /// Application state shared across handlers
@@ -25,7 +25,10 @@ pub struct AppState {
     /// Redis client
     pub redis_client: DynRedisClient,
 
-    /// Database pool
+    /// PostgreSQL client
+    pub postgres: DynPostgresClient,
+
+    /// Database pool (for migrations)
     pub db_pool: sqlx::PgPool,
 }
 
@@ -37,6 +40,7 @@ impl AppState {
         auth_service: DynAuthService,
         listing_service: DynListingService,
         redis_client: DynRedisClient,
+        postgres: DynPostgresClient,
         db_pool: sqlx::PgPool,
     ) -> Self {
         Self {
@@ -45,6 +49,7 @@ impl AppState {
             auth_service,
             listing_service,
             redis_client,
+            postgres,
             db_pool,
         }
     }

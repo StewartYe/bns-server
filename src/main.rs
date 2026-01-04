@@ -104,6 +104,9 @@ async fn main() -> anyhow::Result<()> {
         confirmation_update_task(listing_service_bg).await;
     });
 
+    // Create postgres client for AppState (reuse the pool)
+    let postgres_state = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
+
     // Create application state
     let state = AppState::new(
         config.clone(),
@@ -111,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
         auth_service,
         listing_service,
         redis_client,
+        postgres_state,
         pool,
     );
 

@@ -35,6 +35,7 @@ pub fn router() -> Router<AppState> {
 /// Name resolution result for GET /v1/names/{name}
 #[derive(Debug, Serialize)]
 pub struct NameResult {
+    pub name: String,
     pub address: String,
     pub id: String,
     pub inscription_id: String,
@@ -159,14 +160,32 @@ pub async fn get_name(State(state): State<AppState>, Path(name): Path<String>) -
 
             match resp.json::<OrdResolveRuneResponse>().await {
                 Ok(ord_data) => {
+                    // Fetch metadata from database
+                    let mut metadata = HashMap::new();
+                    if let Ok(Some(db_metadata)) = state.postgres.get_name_metadata(&name).await {
+                        if let Some(desc) = db_metadata.description {
+                            metadata.insert("description".to_string(), desc);
+                        }
+                        if let Some(url) = db_metadata.url {
+                            metadata.insert("url".to_string(), url);
+                        }
+                        if let Some(twitter) = db_metadata.twitter {
+                            metadata.insert("twitter".to_string(), twitter);
+                        }
+                        if let Some(email) = db_metadata.email {
+                            metadata.insert("email".to_string(), email);
+                        }
+                    }
+
                     let response = GetNameResponse {
                         result: NameResult {
+                            name: name.clone(),
                             address: ord_data.result.address,
                             id: ord_data.result.rune_id,
                             inscription_id: ord_data.result.inscription_id,
                             inscription_number: ord_data.result.inscription_number,
                             etching_tx_hash: ord_data.result.etching,
-                            metadata: HashMap::new(),
+                            metadata,
                         },
                     };
                     Json(response).into_response()
@@ -233,18 +252,29 @@ pub async fn get_address_names(
                     let page = pagination.page.max(1);
                     let page_size = pagination.page_size.clamp(1, 100);
 
+                    // Get user's primary name from database
+                    let primary_name = state
+                        .postgres
+                        .get_user(&address)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|u| u.primary_name);
+
                     // Calculate pagination bounds
                     let start = ((page - 1) * page_size) as usize;
                     let end = (start + page_size as usize).min(ord_data.runes.len());
 
-                    // Map to NameEntry with rune_id
+                    // Map to NameEntry with rune_id and is_primary
                     let names: Vec<NameEntry> = if start < ord_data.runes.len() {
                         ord_data.runes[start..end]
                             .iter()
                             .map(|rune| NameEntry {
                                 name: rune.rune_name.clone(),
                                 id: rune.rune_id.clone(),
-                                is_primary: false,
+                                is_primary: primary_name
+                                    .as_ref()
+                                    .is_some_and(|p| p == &rune.rune_name),
                             })
                             .collect()
                     } else {

@@ -11,8 +11,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::domain::{
-    CanisterEvent, Listing, ListingStatus, ShoutOut, TransactionStatus, TransactionType, User,
-    UserTransaction,
+    CanisterEvent, Listing, ListingStatus, NameMetadata, ShoutOut, TransactionStatus,
+    TransactionType, User, UserTransaction,
 };
 use crate::error::Result;
 
@@ -22,6 +22,13 @@ pub trait PostgresClient: Send + Sync {
     // User operations
     async fn get_user(&self, address: &str) -> Result<Option<User>>;
     async fn upsert_user(&self, user: &User) -> Result<()>;
+    async fn set_primary_name(&self, address: &str, name: &str) -> Result<()>;
+    async fn clear_primary_name(&self, address: &str) -> Result<()>;
+
+    // Name metadata operations
+    async fn get_name_metadata(&self, name: &str) -> Result<Option<NameMetadata>>;
+    async fn upsert_name_metadata(&self, metadata: &NameMetadata) -> Result<()>;
+    async fn delete_name_metadata(&self, name: &str) -> Result<()>;
 
     // Listing operations
     async fn get_listing(&self, name: &str) -> Result<Option<Listing>>;
@@ -131,14 +138,149 @@ fn listing_status_to_str(status: ListingStatus) -> &'static str {
     }
 }
 
+/// Database row for users table
+#[derive(Debug, sqlx::FromRow)]
+struct UserRow {
+    btc_address: String,
+    primary_name: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    last_seen_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<UserRow> for User {
+    fn from(row: UserRow) -> Self {
+        Self {
+            btc_address: row.btc_address,
+            primary_name: row.primary_name,
+            created_at: row.created_at,
+            last_seen_at: row.last_seen_at,
+        }
+    }
+}
+
+/// Database row for name_metadata table
+#[derive(Debug, sqlx::FromRow)]
+struct NameMetadataRow {
+    name: String,
+    owner_address: String,
+    description: Option<String>,
+    url: Option<String>,
+    twitter: Option<String>,
+    email: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<NameMetadataRow> for NameMetadata {
+    fn from(row: NameMetadataRow) -> Self {
+        Self {
+            name: row.name,
+            owner_address: row.owner_address,
+            description: row.description,
+            url: row.url,
+            twitter: row.twitter,
+            email: row.email,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
 #[async_trait]
 impl PostgresClient for PostgresClientImpl {
-    async fn get_user(&self, _address: &str) -> Result<Option<User>> {
-        todo!("Implement get_user")
+    async fn get_user(&self, address: &str) -> Result<Option<User>> {
+        let row = sqlx::query_as::<_, UserRow>(
+            "SELECT btc_address, primary_name, created_at, last_seen_at FROM users WHERE btc_address = $1",
+        )
+        .bind(address)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Into::into))
     }
 
-    async fn upsert_user(&self, _user: &User) -> Result<()> {
-        todo!("Implement upsert_user")
+    async fn upsert_user(&self, user: &User) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO users (btc_address, primary_name, created_at, last_seen_at)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (btc_address) DO UPDATE SET
+                primary_name = EXCLUDED.primary_name,
+                last_seen_at = EXCLUDED.last_seen_at",
+        )
+        .bind(&user.btc_address)
+        .bind(&user.primary_name)
+        .bind(user.created_at)
+        .bind(user.last_seen_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn set_primary_name(&self, address: &str, name: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET primary_name = $1, last_seen_at = NOW() WHERE btc_address = $2")
+            .bind(name)
+            .bind(address)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn clear_primary_name(&self, address: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET primary_name = NULL, last_seen_at = NOW() WHERE btc_address = $1")
+            .bind(address)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn get_name_metadata(&self, name: &str) -> Result<Option<NameMetadata>> {
+        let row = sqlx::query_as::<_, NameMetadataRow>(
+            "SELECT name, owner_address, description, url, twitter, email, created_at, updated_at
+             FROM name_metadata WHERE name = $1",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(Into::into))
+    }
+
+    async fn upsert_name_metadata(&self, metadata: &NameMetadata) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO name_metadata (name, owner_address, description, url, twitter, email, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (name) DO UPDATE SET
+                owner_address = EXCLUDED.owner_address,
+                description = EXCLUDED.description,
+                url = EXCLUDED.url,
+                twitter = EXCLUDED.twitter,
+                email = EXCLUDED.email,
+                updated_at = EXCLUDED.updated_at",
+        )
+        .bind(&metadata.name)
+        .bind(&metadata.owner_address)
+        .bind(&metadata.description)
+        .bind(&metadata.url)
+        .bind(&metadata.twitter)
+        .bind(&metadata.email)
+        .bind(metadata.created_at)
+        .bind(metadata.updated_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn delete_name_metadata(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM name_metadata WHERE name = $1")
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
     }
 
     async fn get_listing(&self, name: &str) -> Result<Option<Listing>> {

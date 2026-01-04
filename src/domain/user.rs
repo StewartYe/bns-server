@@ -12,6 +12,8 @@ use super::TransactionStatus;
 pub struct User {
     /// Bitcoin address (primary identifier)
     pub btc_address: String,
+    /// User's primary name (optional)
+    pub primary_name: Option<String>,
     /// First seen timestamp
     pub created_at: DateTime<Utc>,
     /// Last active timestamp

@@ -7,6 +7,11 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
 - [Name Resolution](#name-resolution)
   - [Resolve Name](#resolve-name)
   - [Resolve Address](#resolve-address)
+  - [Get Name Metadata](#get-name-metadata)
+  - [Update Name Metadata](#update-name-metadata)
+- [User Settings](#user-settings)
+  - [Set Primary Name](#set-primary-name)
+  - [Clear Primary Name](#clear-primary-name)
 - [Authentication](#authentication)
   - [Login (BIP-322)](#login-bip-322)
   - [Get Current User](#get-current-user)
@@ -42,6 +47,7 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X�
 ```json
 {
   "result": {
+    "name": "P•X•H•M•B•W",
     "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
     "id": "111800:2",
     "inscription_id": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9i0",
@@ -56,12 +62,34 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X�
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `name` | string | The queried rune name |
 | `address` | string | Bitcoin address that owns the name |
 | `id` | string | Rune ID (format: `block:index`) |
 | `inscription_id` | string | Inscription ID |
 | `inscription_number` | number | Inscription number |
 | `etching_tx_hash` | string | Transaction hash of the etching |
-| `metadata` | object | Key-value metadata (reserved for future use) |
+| `metadata` | object | Key-value metadata (description, url, twitter, email) |
+
+**Metadata Fields (when set):**
+
+```json
+{
+  "result": {
+    "name": "P•X•H•M•B•W",
+    "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+    "id": "111800:2",
+    "inscription_id": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9i0",
+    "inscription_number": 256889,
+    "etching_tx_hash": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9",
+    "metadata": {
+      "twitter": "OmnityBTCdApps",
+      "description": "The official BNS for BNS.ZONE",
+      "url": "https://bns.zone",
+      "email": "hi@oct.network"
+    }
+  }
+}
+```
 
 ### Resolve Address
 
@@ -99,13 +127,43 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/addresses/t
       "is_primary": false
     },
     {
+      "name": "PXHMBZ",
+      "id": "111800:1",
+      "is_primary": false
+    },
+    {
+      "name": "PWAAAA",
+      "id": "111837:2",
+      "is_primary": false
+    },
+    {
+      "name": "HOPE•YOU•GETTX•RICH•AGAIN",
+      "id": "86293:245",
+      "is_primary": false
+    },
+    {
+      "name": "MAKE•RICH•GREAT•AGAIN",
+      "id": "82992:91",
+      "is_primary": false
+    },
+    {
       "name": "P•X•H•M•B•W",
       "id": "111800:2",
+      "is_primary": true
+    },
+    {
+      "name": "HOPE•YOU•NLP•RICH•CISOO",
+      "id": "84919:628",
       "is_primary": false
     },
     {
       "name": "MYTHIC•OMNITY•NETWORK",
       "id": "109492:3709",
+      "is_primary": false
+    },
+    {
+      "name": "HOPE•YOU•GET•RICC",
+      "id": "82921:37",
       "is_primary": false
     }
   ],
@@ -121,7 +179,167 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/addresses/t
 |-------|------|-------------|
 | `name` | string | The rune name |
 | `id` | string | Rune ID (format: `block:index`) |
-| `is_primary` | boolean | Whether this is the primary name for the address (reserved for future use) |
+| `is_primary` | boolean | Whether this is the user's primary name |
+
+### Get Name Metadata
+
+Get metadata for a specific name.
+
+**Endpoint:** `GET /v1/names/{name}/metadata`
+
+**Example:**
+
+```bash
+curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X•H•M•B•W/metadata
+```
+
+**Response:**
+
+```json
+{
+  "name": "P•X•H•M•B•W",
+  "metadata": {
+    "description": "The official BNS for BNS.ZONE",
+    "url": "https://bns.zone",
+    "twitter": "OmnityBTCdApps",
+    "email": "hi@oct.network"
+  }
+}
+```
+
+> **Note:** Returns an empty `metadata` object if no metadata has been set.
+
+### Update Name Metadata
+
+Update metadata for a name you own. Requires authentication.
+
+**Endpoint:** `PUT /v1/names/{name}/metadata`
+
+**Headers:**
+```
+Authorization: Bearer {session_id}
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "description": "The official BNS for BNS.ZONE",
+  "url": "https://bns.zone",
+  "twitter": "OmnityBTCdApps",
+  "email": "hi@oct.network"
+}
+```
+
+All fields are optional. Only include the fields you want to set or update.
+
+**Example:**
+
+```bash
+curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X•H•M•B•W/metadata \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "My awesome name",
+    "url": "https://example.com"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "name": "P•X•H•M•B•W",
+  "metadata": {
+    "description": "My awesome name",
+    "url": "https://example.com"
+  }
+}
+```
+
+**Errors:**
+
+| Status | Description |
+|--------|-------------|
+| `401` | Not authenticated |
+| `403` | Name does not belong to the authenticated address |
+
+---
+
+## User Settings
+
+### Set Primary Name
+
+Set a name as your primary name. The name must belong to your address.
+
+**Endpoint:** `PUT /v1/user/primary-name`
+
+**Headers:**
+```
+Authorization: Bearer {session_id}
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "name": "P•X•H•M•B•W"
+}
+```
+
+**Example:**
+
+```bash
+curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/primary-name \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "P•X•H•M•B•W"}'
+```
+
+**Response:**
+
+```json
+{
+  "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+  "primary_name": "P•X•H•M•B•W"
+}
+```
+
+**Errors:**
+
+| Status | Description |
+|--------|-------------|
+| `401` | Not authenticated |
+| `403` | Name does not belong to the authenticated address |
+
+### Clear Primary Name
+
+Remove your primary name setting.
+
+**Endpoint:** `DELETE /v1/user/primary-name`
+
+**Headers:**
+```
+Authorization: Bearer {session_id}
+```
+
+**Example:**
+
+```bash
+curl -X DELETE https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/primary-name \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
+```
+
+**Response:**
+
+```json
+{
+  "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+  "primary_name": null
+}
+```
 
 ---
 
