@@ -6,8 +6,10 @@
 //!
 //! These endpoints proxy requests to the Ord backend server.
 
+use std::collections::HashMap;
+
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
@@ -30,23 +32,87 @@ pub fn router() -> Router<AppState> {
 // Response types
 // ============================================================================
 
-/// Name resolution result
-#[derive(Debug, Serialize, Deserialize)]
+/// Name resolution result for GET /v1/names/{name}
+#[derive(Debug, Serialize)]
 pub struct NameResult {
     pub address: String,
+    pub id: String,
     pub inscription_id: String,
+    pub inscription_number: u64,
+    pub etching_tx_hash: String,
+    pub metadata: HashMap<String, String>,
 }
 
 /// GET /v1/names/{name} response
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct GetNameResponse {
     pub result: NameResult,
+}
+
+/// Ord backend resolve_rune response
+#[derive(Debug, Deserialize)]
+struct OrdResolveRuneResponse {
+    pub result: OrdRuneResult,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrdRuneResult {
+    pub address: String,
+    pub inscription_id: String,
+    pub rune_id: String,
+    pub etching: String,
+    pub inscription_number: u64,
+    #[allow(dead_code)]
+    pub transfer_height: u64,
+}
+
+/// Name entry in address names response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NameEntry {
+    pub name: String,
+    pub id: String,
+    pub is_primary: bool,
 }
 
 /// GET /v1/addresses/{address}/names response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetAddressNamesResponse {
-    pub rune_names: Vec<String>,
+    pub address: String,
+    pub names: Vec<NameEntry>,
+    pub page: u32,
+    pub page_size: u32,
+    pub total: u32,
+}
+
+/// Query parameters for pagination
+#[derive(Debug, Deserialize)]
+pub struct PaginationQuery {
+    #[serde(default = "default_page")]
+    pub page: u32,
+    #[serde(default = "default_page_size")]
+    pub page_size: u32,
+}
+
+fn default_page() -> u32 {
+    1
+}
+
+fn default_page_size() -> u32 {
+    20
+}
+
+/// Backend response from Ord for resolve_address
+#[derive(Debug, Deserialize)]
+struct OrdAddressNamesResponse {
+    pub runes: Vec<OrdRuneEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrdRuneEntry {
+    pub rune_id: String,
+    pub rune_name: String,
+    #[allow(dead_code)]
+    pub transfer_height: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,8 +128,8 @@ pub struct ErrorResponse {
 ///
 /// GET /v1/names/{name}
 ///
-/// Proxies request to Ord backend and returns the Bitcoin address
-/// and inscription ID for a given name.
+/// Proxies request to Ord backend and returns the Bitcoin address,
+/// inscription details, and metadata for a given name.
 pub async fn get_name(State(state): State<AppState>, Path(name): Path<String>) -> Response {
     let Some(ord_url) = &state.config.ord_url else {
         return (
@@ -91,8 +157,20 @@ pub async fn get_name(State(state): State<AppState>, Path(name): Path<String>) -
                     .into_response();
             }
 
-            match resp.json::<GetNameResponse>().await {
-                Ok(data) => Json(data).into_response(),
+            match resp.json::<OrdResolveRuneResponse>().await {
+                Ok(ord_data) => {
+                    let response = GetNameResponse {
+                        result: NameResult {
+                            address: ord_data.result.address,
+                            id: ord_data.result.rune_id,
+                            inscription_id: ord_data.result.inscription_id,
+                            inscription_number: ord_data.result.inscription_number,
+                            etching_tx_hash: ord_data.result.etching,
+                            metadata: HashMap::new(),
+                        },
+                    };
+                    Json(response).into_response()
+                }
                 Err(e) => (
                     StatusCode::BAD_GATEWAY,
                     Json(ErrorResponse {
@@ -114,13 +192,14 @@ pub async fn get_name(State(state): State<AppState>, Path(name): Path<String>) -
 
 /// Reverse resolution: address -> names
 ///
-/// GET /v1/addresses/{address}/names
+/// GET /v1/addresses/{address}/names?page=1&page_size=20
 ///
 /// Proxies request to Ord backend and returns all names
-/// owned by a given Bitcoin address.
+/// owned by a given Bitcoin address with pagination.
 pub async fn get_address_names(
     State(state): State<AppState>,
     Path(address): Path<String>,
+    Query(pagination): Query<PaginationQuery>,
 ) -> Response {
     let Some(ord_url) = &state.config.ord_url else {
         return (
@@ -148,8 +227,40 @@ pub async fn get_address_names(
                     .into_response();
             }
 
-            match resp.json::<GetAddressNamesResponse>().await {
-                Ok(data) => Json(data).into_response(),
+            match resp.json::<OrdAddressNamesResponse>().await {
+                Ok(ord_data) => {
+                    let total = ord_data.runes.len() as u32;
+                    let page = pagination.page.max(1);
+                    let page_size = pagination.page_size.clamp(1, 100);
+
+                    // Calculate pagination bounds
+                    let start = ((page - 1) * page_size) as usize;
+                    let end = (start + page_size as usize).min(ord_data.runes.len());
+
+                    // Map to NameEntry with rune_id
+                    let names: Vec<NameEntry> = if start < ord_data.runes.len() {
+                        ord_data.runes[start..end]
+                            .iter()
+                            .map(|rune| NameEntry {
+                                name: rune.rune_name.clone(),
+                                id: rune.rune_id.clone(),
+                                is_primary: false,
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    let response = GetAddressNamesResponse {
+                        address: address.clone(),
+                        names,
+                        page,
+                        page_size,
+                        total,
+                    };
+
+                    Json(response).into_response()
+                }
                 Err(e) => (
                     StatusCode::BAD_GATEWAY,
                     Json(ErrorResponse {

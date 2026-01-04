@@ -27,7 +27,7 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
 
 ### Resolve Name
 
-Get the Bitcoin address and inscription ID for a rune name.
+Get the Bitcoin address, inscription details, and metadata for a rune name.
 
 **Endpoint:** `GET /v1/names/{name}`
 
@@ -43,37 +43,85 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X�
 {
   "result": {
     "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-    "inscription_id": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9i0"
+    "id": "111800:2",
+    "inscription_id": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9i0",
+    "inscription_number": 256889,
+    "etching_tx_hash": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9",
+    "metadata": {}
   }
 }
 ```
 
+**Result Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `address` | string | Bitcoin address that owns the name |
+| `id` | string | Rune ID (format: `block:index`) |
+| `inscription_id` | string | Inscription ID |
+| `inscription_number` | number | Inscription number |
+| `etching_tx_hash` | string | Transaction hash of the etching |
+| `metadata` | object | Key-value metadata (reserved for future use) |
+
 ### Resolve Address
 
-List all rune names belonging to a Bitcoin address.
+List all rune names belonging to a Bitcoin address with pagination.
 
 **Endpoint:** `GET /v1/addresses/{address}/names`
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | number | 1 | Page number (1-indexed) |
+| `page_size` | number | 20 | Number of names per page (max: 100) |
 
 **Example:**
 
 ```bash
-curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/addresses/tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2/names
+curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/addresses/tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2/names?page=1&page_size=20"
 ```
 
 **Response:**
 
 ```json
 {
-  "rune_names": [
-    "HOPE•YOU•GIVE•RICH•AGAIN",
-    "HOPE•YOU•GET•RICH•AGAIN",
-    "PXHMBZ",
-    "PWAAAA",
-    "P•X•H•M•B•W",
-    "MYTHIC•OMNITY•NETWORK"
-  ]
+  "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+  "names": [
+    {
+      "name": "HOPE•YOU•GIVE•RICH•AGAIN",
+      "id": "86311:49",
+      "is_primary": false
+    },
+    {
+      "name": "HOPE•YOU•GET•RICH•AGAIN",
+      "id": "82913:22",
+      "is_primary": false
+    },
+    {
+      "name": "P•X•H•M•B•W",
+      "id": "111800:2",
+      "is_primary": false
+    },
+    {
+      "name": "MYTHIC•OMNITY•NETWORK",
+      "id": "109492:3709",
+      "is_primary": false
+    }
+  ],
+  "page": 1,
+  "page_size": 20,
+  "total": 10
 }
 ```
+
+**Name Entry Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `id` | string | Rune ID (format: `block:index`) |
+| `is_primary` | boolean | Whether this is the primary name for the address (reserved for future use) |
 
 ---
 
