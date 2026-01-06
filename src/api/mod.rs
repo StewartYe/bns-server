@@ -42,7 +42,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/user/primary-name", put(user::set_primary_name))
         .route("/v1/user/primary-name", delete(user::clear_primary_name))
         // Name metadata endpoints
-        .route("/v1/names/{name}/metadata", get(user::get_name_metadata))
         .route("/v1/names/{name}/metadata", put(user::update_name_metadata))
         // Real-time endpoints
         .route("/v1/listings/new", get(ws::get_new_listings))

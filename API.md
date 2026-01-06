@@ -7,7 +7,6 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
 - [Name Resolution](#name-resolution)
   - [Resolve Name](#resolve-name)
   - [Resolve Address](#resolve-address)
-  - [Get Name Metadata](#get-name-metadata)
   - [Update Name Metadata](#update-name-metadata)
 - [User Settings](#user-settings)
   - [Set Primary Name](#set-primary-name)
@@ -52,8 +51,13 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X�
     "id": "111800:2",
     "inscription_id": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9i0",
     "inscription_number": 256889,
-    "etching_tx_hash": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9",
-    "metadata": {}
+    "confirmations": 10001,
+    "metadata": {
+      "twitter": "OmnityBTCdApps",
+      "description": "The official BNS for BNS.ZONE",
+      "url": "https://bns.zone",
+      "email": "hi@oct.network"
+    }
   }
 }
 ```
@@ -67,29 +71,8 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X�
 | `id` | string | Rune ID (format: `block:index`) |
 | `inscription_id` | string | Inscription ID |
 | `inscription_number` | number | Inscription number |
-| `etching_tx_hash` | string | Transaction hash of the etching |
+| `confirmations` | number | Number of blockchain confirmations |
 | `metadata` | object | Key-value metadata (description, url, twitter, email) |
-
-**Metadata Fields (when set):**
-
-```json
-{
-  "result": {
-    "name": "P•X•H•M•B•W",
-    "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-    "id": "111800:2",
-    "inscription_id": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9i0",
-    "inscription_number": 256889,
-    "etching_tx_hash": "cc26da50bf2866bb3051c9c1c47671bc186f1fad86f085351acc386175a04db9",
-    "metadata": {
-      "twitter": "OmnityBTCdApps",
-      "description": "The official BNS for BNS.ZONE",
-      "url": "https://bns.zone",
-      "email": "hi@oct.network"
-    }
-  }
-}
-```
 
 ### Resolve Address
 
@@ -119,57 +102,37 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/addresses/t
     {
       "name": "HOPE•YOU•GIVE•RICH•AGAIN",
       "id": "86311:49",
-      "is_primary": false
+      "is_primary": false,
+      "confirmations": 10001
     },
     {
       "name": "HOPE•YOU•GET•RICH•AGAIN",
       "id": "82913:22",
-      "is_primary": false
+      "is_primary": false,
+      "confirmations": 10001
     },
     {
       "name": "PXHMBZ",
       "id": "111800:1",
-      "is_primary": false
+      "is_primary": false,
+      "confirmations": 8767
     },
     {
       "name": "PWAAAA",
       "id": "111837:2",
-      "is_primary": false
-    },
-    {
-      "name": "HOPE•YOU•GETTX•RICH•AGAIN",
-      "id": "86293:245",
-      "is_primary": false
-    },
-    {
-      "name": "MAKE•RICH•GREAT•AGAIN",
-      "id": "82992:91",
-      "is_primary": false
+      "is_primary": false,
+      "confirmations": 6001
     },
     {
       "name": "P•X•H•M•B•W",
       "id": "111800:2",
-      "is_primary": true
-    },
-    {
-      "name": "HOPE•YOU•NLP•RICH•CISOO",
-      "id": "84919:628",
-      "is_primary": false
-    },
-    {
-      "name": "MYTHIC•OMNITY•NETWORK",
-      "id": "109492:3709",
-      "is_primary": false
-    },
-    {
-      "name": "HOPE•YOU•GET•RICC",
-      "id": "82921:37",
-      "is_primary": false
+      "is_primary": true,
+      "confirmations": 10001
     }
   ],
   "page": 1,
   "page_size": 20,
-  "total": 10
+  "total": 5
 }
 ```
 
@@ -180,38 +143,11 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/addresses/t
 | `name` | string | The rune name |
 | `id` | string | Rune ID (format: `block:index`) |
 | `is_primary` | boolean | Whether this is the user's primary name |
-
-### Get Name Metadata
-
-Get metadata for a specific name.
-
-**Endpoint:** `GET /v1/names/{name}/metadata`
-
-**Example:**
-
-```bash
-curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X•H•M•B•W/metadata
-```
-
-**Response:**
-
-```json
-{
-  "name": "P•X•H•M•B•W",
-  "metadata": {
-    "description": "The official BNS for BNS.ZONE",
-    "url": "https://bns.zone",
-    "twitter": "OmnityBTCdApps",
-    "email": "hi@oct.network"
-  }
-}
-```
-
-> **Note:** Returns an empty `metadata` object if no metadata has been set.
+| `confirmations` | number | Number of blockchain confirmations |
 
 ### Update Name Metadata
 
-Update metadata for a name you own. Requires authentication.
+Update metadata for a name you own. Requires authentication. The name must have at least 3 confirmations.
 
 **Endpoint:** `PUT /v1/names/{name}/metadata`
 
@@ -262,6 +198,7 @@ curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/names
 
 | Status | Description |
 |--------|-------------|
+| `400` | Name has fewer than 3 confirmations |
 | `401` | Not authenticated |
 | `403` | Name does not belong to the authenticated address |
 
@@ -271,7 +208,7 @@ curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/names
 
 ### Set Primary Name
 
-Set a name as your primary name. The name must belong to your address.
+Set a name as your primary name. The name must belong to your address and have at least 3 confirmations.
 
 **Endpoint:** `PUT /v1/user/primary-name`
 
@@ -311,6 +248,7 @@ curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/
 
 | Status | Description |
 |--------|-------------|
+| `400` | Name has fewer than 3 confirmations |
 | `401` | Not authenticated |
 | `403` | Name does not belong to the authenticated address |
 

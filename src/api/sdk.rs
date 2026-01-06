@@ -40,7 +40,7 @@ pub struct NameResult {
     pub id: String,
     pub inscription_id: String,
     pub inscription_number: u64,
-    pub etching_tx_hash: String,
+    pub confirmations: u64,
     pub metadata: HashMap<String, String>,
 }
 
@@ -50,7 +50,7 @@ pub struct GetNameResponse {
     pub result: NameResult,
 }
 
-/// Ord backend resolve_rune response
+/// Ord backend /bns/rune/{rune} response
 #[derive(Debug, Deserialize)]
 struct OrdResolveRuneResponse {
     pub result: OrdRuneResult,
@@ -61,10 +61,8 @@ struct OrdRuneResult {
     pub address: String,
     pub inscription_id: String,
     pub rune_id: String,
-    pub etching: String,
     pub inscription_number: u64,
-    #[allow(dead_code)]
-    pub transfer_height: u64,
+    pub confirmations: u64,
 }
 
 /// Name entry in address names response
@@ -73,6 +71,7 @@ pub struct NameEntry {
     pub name: String,
     pub id: String,
     pub is_primary: bool,
+    pub confirmations: u64,
 }
 
 /// GET /v1/addresses/{address}/names response
@@ -102,7 +101,7 @@ fn default_page_size() -> u32 {
     20
 }
 
-/// Backend response from Ord for resolve_address
+/// Backend response from Ord for /bns/address/{address}
 #[derive(Debug, Deserialize)]
 struct OrdAddressNamesResponse {
     pub runes: Vec<OrdRuneEntry>,
@@ -112,8 +111,7 @@ struct OrdAddressNamesResponse {
 struct OrdRuneEntry {
     pub rune_id: String,
     pub rune_name: String,
-    #[allow(dead_code)]
-    pub transfer_height: u64,
+    pub confirmations: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,8 +140,8 @@ pub async fn get_name(State(state): State<AppState>, Path(name): Path<String>) -
             .into_response();
     };
 
-    // Ord backend uses /resolve_rune/{rune}
-    let url = format!("{}/resolve_rune/{}", ord_url, name);
+    // Ord backend uses /bns/rune/{rune}
+    let url = format!("{}/bns/rune/{}", ord_url, name);
 
     match state.http_client.get(&url).send().await {
         Ok(resp) => {
@@ -184,7 +182,7 @@ pub async fn get_name(State(state): State<AppState>, Path(name): Path<String>) -
                             id: ord_data.result.rune_id,
                             inscription_id: ord_data.result.inscription_id,
                             inscription_number: ord_data.result.inscription_number,
-                            etching_tx_hash: ord_data.result.etching,
+                            confirmations: ord_data.result.confirmations,
                             metadata,
                         },
                     };
@@ -230,8 +228,8 @@ pub async fn get_address_names(
             .into_response();
     };
 
-    // Ord backend uses /resolve_address/{address}
-    let url = format!("{}/resolve_address/{}", ord_url, address);
+    // Ord backend uses /bns/address/{address}
+    let url = format!("{}/bns/address/{}", ord_url, address);
 
     match state.http_client.get(&url).send().await {
         Ok(resp) => {
@@ -265,7 +263,7 @@ pub async fn get_address_names(
                     let start = ((page - 1) * page_size) as usize;
                     let end = (start + page_size as usize).min(ord_data.runes.len());
 
-                    // Map to NameEntry with rune_id and is_primary
+                    // Map to NameEntry with rune_id, is_primary, and confirmations
                     let names: Vec<NameEntry> = if start < ord_data.runes.len() {
                         ord_data.runes[start..end]
                             .iter()
@@ -275,6 +273,7 @@ pub async fn get_address_names(
                                 is_primary: primary_name
                                     .as_ref()
                                     .is_some_and(|p| p == &rune.rune_name),
+                                confirmations: rune.confirmations,
                             })
                             .collect()
                     } else {

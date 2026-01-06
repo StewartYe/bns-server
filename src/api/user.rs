@@ -3,7 +3,6 @@
 //! Endpoints for user-specific operations:
 //! - PUT /v1/user/primary-name - Set primary name
 //! - DELETE /v1/user/primary-name - Clear primary name
-//! - GET /v1/names/{name}/metadata - Get name metadata
 //! - PUT /v1/names/{name}/metadata - Update name metadata
 
 use std::collections::HashMap;
@@ -35,7 +34,10 @@ pub struct NameMetadataResponse {
     pub metadata: HashMap<String, String>,
 }
 
-/// Ord backend resolve_rune response (for ownership verification)
+/// Minimum confirmations required for metadata/primary name updates
+const FINALIZE_THRESHOLD: u64 = 3;
+
+/// Ord backend /bns/rune/{rune} response (for ownership verification)
 #[derive(Debug, Deserialize)]
 struct OrdResolveRuneResponse {
     pub result: OrdRuneResult,
@@ -44,6 +46,7 @@ struct OrdResolveRuneResponse {
 #[derive(Debug, Deserialize)]
 struct OrdRuneResult {
     pub address: String,
+    pub confirmations: u64,
 }
 
 /// Error response
@@ -63,7 +66,8 @@ fn extract_session_id(request: &Request) -> Result<&str, AppError> {
 }
 
 /// Verify that the given name belongs to the given address by querying Ord
-async fn verify_name_ownership(
+/// Also checks that the name has sufficient confirmations (>= FINALIZE_THRESHOLD)
+async fn verify_name_ownership_and_confirmations(
     state: &AppState,
     name: &str,
     address: &str,
@@ -78,7 +82,7 @@ async fn verify_name_ownership(
             .into_response());
     };
 
-    let url = format!("{}/resolve_rune/{}", ord_url, name);
+    let url = format!("{}/bns/rune/{}", ord_url, name);
 
     let resp = state.http_client.get(&url).send().await.map_err(|e| {
         (
@@ -122,6 +126,20 @@ async fn verify_name_ownership(
             .into_response());
     }
 
+    // Verify confirmations
+    if ord_data.result.confirmations < FINALIZE_THRESHOLD {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "Name {} has {} confirmations, but requires at least {} to update",
+                    name, ord_data.result.confirmations, FINALIZE_THRESHOLD
+                ),
+            }),
+        )
+            .into_response());
+    }
+
     Ok(ord_data.result)
 }
 
@@ -148,8 +166,8 @@ pub async fn set_primary_name(
     let req: SetPrimaryNameRequest = serde_json::from_slice(&body)
         .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
 
-    // Verify ownership
-    verify_name_ownership(&state, &req.name, &session.btc_address)
+    // Verify ownership and confirmations
+    verify_name_ownership_and_confirmations(&state, &req.name, &session.btc_address)
         .await
         .map_err(|resp| AppError::Internal(format!("Ownership verification failed: {:?}", resp)))?;
 
@@ -191,49 +209,6 @@ pub async fn clear_primary_name(
     .into_response())
 }
 
-/// Get name metadata
-///
-/// GET /v1/names/{name}/metadata
-pub async fn get_name_metadata(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Response {
-    match state.postgres.get_name_metadata(&name).await {
-        Ok(Some(metadata)) => {
-            let mut map = HashMap::new();
-            if let Some(desc) = metadata.description {
-                map.insert("description".to_string(), desc);
-            }
-            if let Some(url) = metadata.url {
-                map.insert("url".to_string(), url);
-            }
-            if let Some(twitter) = metadata.twitter {
-                map.insert("twitter".to_string(), twitter);
-            }
-            if let Some(email) = metadata.email {
-                map.insert("email".to_string(), email);
-            }
-
-            Json(NameMetadataResponse { name, metadata: map }).into_response()
-        }
-        Ok(None) => {
-            // Return empty metadata if not found
-            Json(NameMetadataResponse {
-                name,
-                metadata: HashMap::new(),
-            })
-            .into_response()
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: e.to_string(),
-            }),
-        )
-            .into_response(),
-    }
-}
-
 /// Update name metadata
 ///
 /// PUT /v1/names/{name}/metadata
@@ -258,10 +233,10 @@ pub async fn update_name_metadata(
     let req: UpdateNameMetadataRequest = serde_json::from_slice(&body)
         .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
 
-    // Verify ownership
-    verify_name_ownership(&state, &name, &session.btc_address)
+    // Verify ownership and confirmations
+    verify_name_ownership_and_confirmations(&state, &name, &session.btc_address)
         .await
-        .map_err(|_| AppError::Forbidden("Name does not belong to this address".into()))?;
+        .map_err(|_| AppError::Forbidden("Name does not belong to this address or has insufficient confirmations".into()))?;
 
     // Get existing metadata or create new
     let now = Utc::now();
