@@ -285,6 +285,13 @@ curl -X DELETE https://bns-server-testnet-219952077564.us-central1.run.app/v1/us
 
 BNS Server uses BIP-322 message signing for authentication. This is supported by modern Bitcoin wallets like UniSat.
 
+### Session Management
+
+Sessions are stored in Redis with network-prefixed keys (testnet/mainnet). Authentication supports two methods:
+
+1. **Secure HttpOnly Cookies** (recommended for browsers): The login response sets a `bns_session` cookie with `Secure`, `HttpOnly`, and `SameSite=Strict` attributes.
+2. **Bearer Token**: The session token is also returned in the response body for API clients.
+
 ### Login (BIP-322)
 
 Authenticate using a BIP-322 signed message.
@@ -334,7 +341,15 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/auth
 }
 ```
 
-> **Security Note:** The `session_id` is in the format `session_id:session_secret`. Only the hash of `session_secret` is stored in the database. Re-login invalidates all previous sessions.
+**Response Headers:**
+```
+Set-Cookie: bns_session=...; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400
+```
+
+> **Security Notes:**
+> - The `session_id` is in the format `session_id:session_secret`. Only SHA256(session_secret) is stored in Redis.
+> - Sessions are stored in Redis with network-prefixed keys (`testnet:session:*` or `mainnet:session:*`).
+> - Re-login invalidates all previous sessions for the same address.
 
 ### Get Current User
 
@@ -342,16 +357,20 @@ Get the currently authenticated user's session information.
 
 **Endpoint:** `GET /v1/auth/me`
 
-**Headers:**
-```
-Authorization: Bearer {session_id}
-```
+**Authentication:** Session cookie or Bearer token
 
-**Example:**
+**Example (with Bearer token):**
 
 ```bash
 curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/auth/me \
   -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
+```
+
+**Example (with cookie):**
+
+```bash
+curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/auth/me \
+  --cookie "bns_session=eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
 ```
 
 **Response:**
@@ -367,14 +386,11 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/auth/me \
 
 ### Logout
 
-Invalidate the current session.
+Invalidate the current session and clear the cookie.
 
 **Endpoint:** `POST /v1/auth/logout`
 
-**Headers:**
-```
-Authorization: Bearer {session_id}
-```
+**Authentication:** Session cookie or Bearer token
 
 **Example:**
 
@@ -384,6 +400,11 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/auth
 ```
 
 **Response:** `204 No Content`
+
+**Response Headers:**
+```
+Set-Cookie: bns_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0
+```
 
 ---
 

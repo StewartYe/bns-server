@@ -62,6 +62,15 @@ impl KeyBuilder {
     pub fn channel_new_list(&self) -> String {
         self.key("new_list")
     }
+
+    // Sessions
+    pub fn session(&self, session_id: &str) -> String {
+        self.key(&format!("session:{}", session_id))
+    }
+
+    pub fn user_sessions(&self, btc_address: &str) -> String {
+        self.key(&format!("user_sessions:{}", btc_address))
+    }
 }
 
 /// Listing info stored in Redis
@@ -128,6 +137,26 @@ pub trait RedisClient: Send + Sync {
 
     /// Remove a listing from the pending confirmations queue
     async fn remove_pending_confirmation(&self, name: &str) -> Result<()>;
+
+    // Session operations
+
+    /// Store a session with TTL
+    async fn set_session(&self, session_id: &str, session_json: &str, ttl_secs: u64) -> Result<()>;
+
+    /// Get a session by ID
+    async fn get_session(&self, session_id: &str) -> Result<Option<String>>;
+
+    /// Delete a session
+    async fn delete_session(&self, session_id: &str) -> Result<()>;
+
+    /// Add session ID to user's session set (for invalidating all user sessions)
+    async fn add_user_session(&self, btc_address: &str, session_id: &str, ttl_secs: u64) -> Result<()>;
+
+    /// Get all session IDs for a user
+    async fn get_user_sessions(&self, btc_address: &str) -> Result<Vec<String>>;
+
+    /// Delete all sessions for a user
+    async fn delete_user_sessions(&self, btc_address: &str) -> Result<u64>;
 }
 
 /// Redis client implementation with TLS support and automatic token refresh
@@ -455,6 +484,64 @@ impl RedisClient for RedisClientImpl {
 
         tracing::info!("Removed {} from pending confirmations queue", name);
         Ok(())
+    }
+
+    // Session operations
+
+    async fn set_session(&self, session_id: &str, session_json: &str, ttl_secs: u64) -> Result<()> {
+        let key = self.keys.session(session_id);
+        self.set_ex(&key, session_json, ttl_secs).await
+    }
+
+    async fn get_session(&self, session_id: &str) -> Result<Option<String>> {
+        let key = self.keys.session(session_id);
+        self.get(&key).await
+    }
+
+    async fn delete_session(&self, session_id: &str) -> Result<()> {
+        let key = self.keys.session(session_id);
+        self.del(&key).await
+    }
+
+    async fn add_user_session(&self, btc_address: &str, session_id: &str, ttl_secs: u64) -> Result<()> {
+        let key = self.keys.user_sessions(btc_address);
+        let mut conn = self.get_connection().await?;
+
+        // Add session to set
+        let _: () = conn.sadd(&key, session_id).await?;
+
+        // Set expiry on the set (refreshed each time a session is added)
+        let _: () = conn.expire(&key, ttl_secs as i64).await?;
+
+        Ok(())
+    }
+
+    async fn get_user_sessions(&self, btc_address: &str) -> Result<Vec<String>> {
+        let key = self.keys.user_sessions(btc_address);
+        let mut conn = self.get_connection().await?;
+        Ok(conn.smembers(&key).await?)
+    }
+
+    async fn delete_user_sessions(&self, btc_address: &str) -> Result<u64> {
+        // Get all session IDs for the user
+        let session_ids = self.get_user_sessions(btc_address).await?;
+        let count = session_ids.len() as u64;
+
+        // Delete each session
+        for session_id in &session_ids {
+            let key = self.keys.session(session_id);
+            let _ = self.del(&key).await;
+        }
+
+        // Delete the user sessions set
+        let key = self.keys.user_sessions(btc_address);
+        self.del(&key).await?;
+
+        if count > 0 {
+            tracing::info!("Deleted {} session(s) for user {}", count, btc_address);
+        }
+
+        Ok(count)
     }
 }
 

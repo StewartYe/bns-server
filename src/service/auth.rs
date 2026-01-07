@@ -1,22 +1,23 @@
 //! Authentication service
 //!
-//! Handles BIP-322 authentication and session management.
+//! Handles BIP-322 authentication and session management using Redis.
 //!
-//! Session Security:
+//! Session Security (BFF - Backend For Frontend):
+//! - Sessions are stored in Redis with network-prefixed keys
 //! - Session token format: session_id:session_secret
-//! - Only SHA256(session_secret) is stored in database
-//! - Database administrators cannot impersonate users
+//! - Only SHA256(session_secret) is stored in Redis
+//! - Sessions are set via secure HttpOnly cookies
 //! - Old sessions are invalidated on re-login (prevents session fixation)
 
 use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::FromRow;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::{AuthResponse, Bip322AuthRequest, User, UserSession};
-use crate::error::{AppError, Result};
-use crate::infra::bip322;
+use crate::error::Result;
+use crate::infra::{bip322, DynRedisClient};
 
 /// Auth service configuration
 #[derive(Debug, Clone)]
@@ -33,48 +34,30 @@ impl Default for AuthConfig {
     }
 }
 
-/// Database row for user
-#[derive(Debug, FromRow)]
-struct UserRow {
-    btc_address: String,
-    primary_name: Option<String>,
-    created_at: DateTime<Utc>,
-    last_seen_at: DateTime<Utc>,
+/// Session data stored in Redis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionData {
+    pub session_id: String,
+    pub btc_address: String,
+    pub secret_hash: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
 }
 
-impl From<UserRow> for User {
-    fn from(row: UserRow) -> Self {
-        User {
-            btc_address: row.btc_address,
-            primary_name: row.primary_name,
-            created_at: row.created_at,
-            last_seen_at: row.last_seen_at,
-        }
-    }
-}
-
-/// Database row for session
-#[derive(Debug, FromRow)]
-struct SessionRow {
-    session_id: String,
-    btc_address: String,
-    created_at: DateTime<Utc>,
-    expires_at: DateTime<Utc>,
-}
-
-impl From<SessionRow> for UserSession {
-    fn from(row: SessionRow) -> Self {
+impl SessionData {
+    fn to_user_session(&self) -> UserSession {
         UserSession {
-            session_id: row.session_id,
-            btc_address: row.btc_address,
-            created_at: row.created_at,
-            expires_at: row.expires_at,
+            session_id: self.session_id.clone(),
+            btc_address: self.btc_address.clone(),
+            created_at: self.created_at,
+            expires_at: self.expires_at,
         }
     }
 }
 
-/// Auth service
+/// Auth service using Redis for session storage
 pub struct AuthService {
+    redis: DynRedisClient,
     pool: sqlx::PgPool,
     config: AuthConfig,
 }
@@ -108,8 +91,8 @@ fn create_session_token(session_id: &str, session_secret: &str) -> String {
 }
 
 impl AuthService {
-    pub fn new(pool: sqlx::PgPool, config: AuthConfig) -> Self {
-        Self { pool, config }
+    pub fn new(redis: DynRedisClient, pool: sqlx::PgPool, config: AuthConfig) -> Self {
+        Self { redis, pool, config }
     }
 
     /// Authenticate with BIP-322 signature
@@ -121,13 +104,13 @@ impl AuthService {
 
         tracing::info!("Verified BIP-322 signature for address: {}", btc_address);
 
-        // Find or create user
+        // Find or create user in PostgreSQL (users table still needed for primary_name etc.)
         let (user, is_new_user) = self.find_or_create_user(btc_address).await?;
 
-        // Invalidate old sessions (prevent session fixation)
+        // Invalidate old sessions in Redis (prevent session fixation)
         self.invalidate_user_sessions(&user.btc_address).await?;
 
-        // Create new session
+        // Create new session in Redis
         let (session, session_token) = self.create_session(&user).await?;
 
         Ok(AuthResponse {
@@ -138,7 +121,7 @@ impl AuthService {
         })
     }
 
-    /// Find existing user or create new one
+    /// Find existing user or create new one (in PostgreSQL)
     async fn find_or_create_user(&self, btc_address: &str) -> Result<(User, bool)> {
         let existing: Option<UserRow> = sqlx::query_as(
             r#"
@@ -198,19 +181,9 @@ impl AuthService {
         }
     }
 
-    /// Invalidate all sessions for a user (prevents session fixation attacks)
+    /// Invalidate all sessions for a user in Redis (prevents session fixation attacks)
     async fn invalidate_user_sessions(&self, btc_address: &str) -> Result<u64> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM sessions
-            WHERE btc_address = $1
-            "#,
-        )
-        .bind(btc_address)
-        .execute(&self.pool)
-        .await?;
-
-        let count = result.rows_affected();
+        let count = self.redis.delete_user_sessions(btc_address).await?;
         if count > 0 {
             tracing::info!(
                 "Invalidated {} old session(s) for user {}",
@@ -221,42 +194,43 @@ impl AuthService {
         Ok(count)
     }
 
-    /// Create a new session for user
+    /// Create a new session for user in Redis
     async fn create_session(&self, user: &User) -> Result<(UserSession, String)> {
         let now = Utc::now();
         let session_id = Uuid::new_v4().to_string();
         let session_secret = generate_session_secret();
         let secret_hash = hash_secret(&session_secret);
 
-        let session = UserSession {
+        let session_data = SessionData {
             session_id: session_id.clone(),
             btc_address: user.btc_address.clone(),
+            secret_hash,
             created_at: now,
             expires_at: now + Duration::seconds(self.config.session_ttl_secs),
         };
 
-        sqlx::query(
-            r#"
-            INSERT INTO sessions (session_id, btc_address, created_at, expires_at, secret_hash)
-            VALUES ($1, $2, $3, $4, $5)
-            "#,
-        )
-        .bind(&session.session_id)
-        .bind(&session.btc_address)
-        .bind(session.created_at)
-        .bind(session.expires_at)
-        .bind(&secret_hash)
-        .execute(&self.pool)
-        .await?;
+        let session_json = serde_json::to_string(&session_data)?;
+        let ttl_secs = self.config.session_ttl_secs as u64;
+
+        // Store session in Redis
+        self.redis
+            .set_session(&session_id, &session_json, ttl_secs)
+            .await?;
+
+        // Add to user's session set (for bulk invalidation)
+        self.redis
+            .add_user_session(&user.btc_address, &session_id, ttl_secs)
+            .await?;
 
         let full_token = create_session_token(&session_id, &session_secret);
+        let user_session = session_data.to_user_session();
 
         tracing::info!(
             "Created session {} for user {}",
-            session.session_id,
+            session_id,
             user.btc_address
         );
-        Ok((session, full_token))
+        Ok((user_session, full_token))
     }
 
     /// Validate a session token and return the user info
@@ -271,19 +245,33 @@ impl AuthService {
 
         let secret_hash = hash_secret(session_secret);
 
-        let session: Option<SessionRow> = sqlx::query_as(
-            r#"
-            SELECT session_id, btc_address, created_at, expires_at
-            FROM sessions
-            WHERE session_id = $1 AND secret_hash = $2 AND expires_at > NOW()
-            "#,
-        )
-        .bind(session_id)
-        .bind(&secret_hash)
-        .fetch_optional(&self.pool)
-        .await?;
+        // Get session from Redis
+        let session_json = match self.redis.get_session(session_id).await? {
+            Some(json) => json,
+            None => return Ok(None),
+        };
 
-        Ok(session.map(|row| row.into()))
+        let session_data: SessionData = match serde_json::from_str(&session_json) {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!("Failed to parse session data: {}", e);
+                return Ok(None);
+            }
+        };
+
+        // Verify secret hash
+        if session_data.secret_hash != secret_hash {
+            tracing::warn!("Session secret mismatch for session {}", session_id);
+            return Ok(None);
+        }
+
+        // Check expiration (Redis TTL should handle this, but double-check)
+        if session_data.expires_at < Utc::now() {
+            tracing::warn!("Session {} has expired", session_id);
+            return Ok(None);
+        }
+
+        Ok(Some(session_data.to_user_session()))
     }
 
     /// Logout - invalidate session by token
@@ -296,38 +284,44 @@ impl AuthService {
             }
         };
 
+        // Verify the secret before deleting
         let secret_hash = hash_secret(session_secret);
 
-        sqlx::query(
-            r#"
-            DELETE FROM sessions
-            WHERE session_id = $1 AND secret_hash = $2
-            "#,
-        )
-        .bind(session_id)
-        .bind(&secret_hash)
-        .execute(&self.pool)
-        .await?;
+        if let Some(session_json) = self.redis.get_session(session_id).await? {
+            if let Ok(session_data) = serde_json::from_str::<SessionData>(&session_json) {
+                if session_data.secret_hash == secret_hash {
+                    self.redis.delete_session(session_id).await?;
+                    tracing::info!("Logged out session {}", session_id);
+                }
+            }
+        }
 
         Ok(())
     }
 
-    /// Clean up expired sessions
-    pub async fn cleanup_expired_sessions(&self) -> Result<u64> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM sessions
-            WHERE expires_at < NOW()
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
+    /// Get session TTL in seconds (for cookie max-age)
+    pub fn session_ttl_secs(&self) -> i64 {
+        self.config.session_ttl_secs
+    }
+}
 
-        let count = result.rows_affected();
-        if count > 0 {
-            tracing::info!("Cleaned up {} expired sessions", count);
+/// Database row for user
+#[derive(Debug, sqlx::FromRow)]
+struct UserRow {
+    btc_address: String,
+    primary_name: Option<String>,
+    created_at: DateTime<Utc>,
+    last_seen_at: DateTime<Utc>,
+}
+
+impl From<UserRow> for User {
+    fn from(row: UserRow) -> Self {
+        User {
+            btc_address: row.btc_address,
+            primary_name: row.primary_name,
+            created_at: row.created_at,
+            last_seen_at: row.last_seen_at,
         }
-        Ok(count)
     }
 }
 

@@ -16,6 +16,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use crate::constants::{FINALIZE_THRESHOLD, SESSION_COOKIE_NAME};
 use crate::domain::{NameMetadata, SetPrimaryNameRequest, UpdateNameMetadataRequest};
 use crate::error::AppError;
 use crate::state::AppState;
@@ -33,9 +34,6 @@ pub struct NameMetadataResponse {
     pub name: String,
     pub metadata: HashMap<String, String>,
 }
-
-/// Minimum confirmations required for metadata/primary name updates
-const FINALIZE_THRESHOLD: u64 = 3;
 
 /// Ord backend /bns/rune/{rune} response (for ownership verification)
 #[derive(Debug, Deserialize)]
@@ -55,14 +53,27 @@ struct ErrorResponse {
     pub error: String,
 }
 
-/// Helper to extract session from request
-fn extract_session_id(request: &Request) -> Result<&str, AppError> {
+/// Helper to extract session from request (supports both cookie and Bearer token)
+fn extract_session_token(request: &Request) -> Result<&str, AppError> {
+    // Try cookie first (preferred for browser security)
+    if let Some(cookie_header) = request.headers().get(header::COOKIE) {
+        if let Ok(cookies_str) = cookie_header.to_str() {
+            for cookie in cookies_str.split(';') {
+                let cookie = cookie.trim();
+                if let Some(value) = cookie.strip_prefix(&format!("{}=", SESSION_COOKIE_NAME)) {
+                    return Ok(value);
+                }
+            }
+        }
+    }
+
+    // Fall back to Bearer token (for API clients)
     request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or_else(|| AppError::Unauthorized("Missing authorization header".into()))
+        .ok_or_else(|| AppError::Unauthorized("Missing session".into()))
 }
 
 /// Verify that the given name belongs to the given address by querying Ord
@@ -150,7 +161,7 @@ pub async fn set_primary_name(
     State(state): State<AppState>,
     request: Request,
 ) -> Result<Response, AppError> {
-    let session_id = extract_session_id(&request)?;
+    let session_id = extract_session_token(&request)?;
 
     let session = state
         .auth_service
@@ -191,7 +202,7 @@ pub async fn clear_primary_name(
     State(state): State<AppState>,
     request: Request,
 ) -> Result<Response, AppError> {
-    let session_id = extract_session_id(&request)?;
+    let session_id = extract_session_token(&request)?;
 
     let session = state
         .auth_service
@@ -217,7 +228,7 @@ pub async fn update_name_metadata(
     Path(name): Path<String>,
     request: Request,
 ) -> Result<Response, AppError> {
-    let session_id = extract_session_id(&request)?;
+    let session_id = extract_session_token(&request)?;
 
     let session = state
         .auth_service

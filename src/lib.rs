@@ -23,6 +23,7 @@
 
 pub mod api;
 pub mod config;
+pub mod constants;
 pub mod domain;
 pub mod error;
 pub mod infra;

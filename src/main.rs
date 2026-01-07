@@ -65,11 +65,11 @@ async fn main() -> anyhow::Result<()> {
     let redis_client = Arc::new(RedisClientImpl::new(&config.redis, config.network).await?);
     tracing::info!("Connected to Redis");
 
-    // Initialize auth service
+    // Initialize auth service (using Redis for sessions)
     let auth_config = AuthConfig {
         session_ttl_secs: config.session_ttl_secs,
     };
-    let auth_service = Arc::new(AuthService::new(pool.clone(), auth_config));
+    let auth_service = Arc::new(AuthService::new(redis_client.clone(), pool.clone(), auth_config));
 
     // Initialize blockchain client
     let ord_url = config.ord_url.as_deref().unwrap_or("http://localhost:80");
