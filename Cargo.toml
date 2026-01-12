@@ -52,3 +52,8 @@ hex = "0.4"
 base32 = "0.5"
 crc32fast = "1.4"
 urlencoding = "2.1"
+
+# IC Agent
+ic-agent = { version = "0.45", features = ["pem"] }
+candid = "0.10"
+k256 = "0.13"

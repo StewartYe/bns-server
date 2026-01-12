@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::infra::{DynPostgresClient, DynRedisClient};
+use crate::infra::{DynPostgresClient, DynRedisClient, IcAgent};
 use crate::service::{DynAuthService, DynListingService};
 
 /// Application state shared across handlers
@@ -30,6 +30,9 @@ pub struct AppState {
 
     /// Database pool (for migrations)
     pub db_pool: sqlx::PgPool,
+
+    /// IC Agent for canister interactions
+    pub ic_agent: Arc<IcAgent>,
 }
 
 impl AppState {
@@ -42,6 +45,7 @@ impl AppState {
         redis_client: DynRedisClient,
         postgres: DynPostgresClient,
         db_pool: sqlx::PgPool,
+        ic_agent: Arc<IcAgent>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -51,6 +55,7 @@ impl AppState {
             redis_client,
             postgres,
             db_pool,
+            ic_agent,
         }
     }
 }

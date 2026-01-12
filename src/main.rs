@@ -13,7 +13,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use bns_server::{
     api,
     config::Config,
-    infra::{BlockchainClientImpl, PostgresClientImpl, RedisClientImpl},
+    infra::{BlockchainClientImpl, IcAgent, PostgresClientImpl, RedisClientImpl},
     service::{AuthConfig, AuthService, DynListingService, ListingService},
     state::AppState,
 };
@@ -107,6 +107,11 @@ async fn main() -> anyhow::Result<()> {
     // Create postgres client for AppState (reuse the pool)
     let postgres_state = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
 
+    // Initialize IC Agent
+    tracing::info!("Initializing IC Agent...");
+    let ic_agent = Arc::new(IcAgent::new(&config.ic).await?);
+    tracing::info!("IC Agent initialized");
+
     // Create application state
     let state = AppState::new(
         config.clone(),
@@ -116,6 +121,7 @@ async fn main() -> anyhow::Result<()> {
         redis_client,
         postgres_state,
         pool,
+        ic_agent,
     );
 
     // Build router

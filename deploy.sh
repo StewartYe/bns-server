@@ -35,6 +35,9 @@ gcloud artifacts repositories create ${REPO_NAME} \
 echo "Building image..."
 gcloud builds submit --tag ${IMAGE_URI} --project=${PROJECT_ID}
 
+# IC Canister configuration
+BNS_CANISTER_ID="f2dwm-caaaa-aaaao-qjxlq-cai"
+
 # Deploy to Cloud Run
 echo "Deploying to Cloud Run (${NETWORK})..."
 gcloud run deploy ${SERVICE_NAME} \
@@ -44,8 +47,8 @@ gcloud run deploy ${SERVICE_NAME} \
     --vpc-connector=${CONNECTOR_NAME} \
     --vpc-egress=private-ranges-only \
     --add-cloudsql-instances=${CLOUD_SQL_INSTANCE} \
-    --set-env-vars="NETWORK=${NETWORK},ORD_BACKEND_URL=http://10.128.15.243,BITCOIND_URL=http://omnity:k2BZNDQ4s71dKXa44pYaA5cTENtGzoPkI0JwqG0uvkY@10.128.15.238:8332,REDIS_HOST=${REDIS_HOST},REDIS_PORT=${REDIS_PORT},REDIS_TLS=${REDIS_TLS},REDIS_USE_IAM=${REDIS_USE_IAM},REDIS_CA_FILE_PATH=${REDIS_CA_FILE_PATH}" \
-    --set-secrets="DATABASE_URL=bns-testnet-database-url:latest" \
+    --set-env-vars="NETWORK=${NETWORK},ORD_BACKEND_URL=http://10.128.15.243,BITCOIND_URL=http://omnity:k2BZNDQ4s71dKXa44pYaA5cTENtGzoPkI0JwqG0uvkY@10.128.15.238:8332,REDIS_HOST=${REDIS_HOST},REDIS_PORT=${REDIS_PORT},REDIS_TLS=${REDIS_TLS},REDIS_USE_IAM=${REDIS_USE_IAM},REDIS_CA_FILE_PATH=${REDIS_CA_FILE_PATH},BNS_CANISTER_ID=${BNS_CANISTER_ID}" \
+    --set-secrets="DATABASE_URL=bns-testnet-database-url:latest,IC_IDENTITY_PEM=ic-identity-pem-testnet:latest" \
     --port=8080 \
     --cpu=1 \
     --memory=512Mi \

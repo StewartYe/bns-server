@@ -47,6 +47,15 @@ pub struct RedisConfig {
     pub ca_file_path: Option<String>,
 }
 
+/// IC (Internet Computer) configuration
+#[derive(Debug, Clone)]
+pub struct IcConfig {
+    /// Identity PEM content (secp256k1 private key in PEM format)
+    pub identity_pem: String,
+    /// BNS canister ID
+    pub bns_canister_id: String,
+}
+
 impl RedisConfig {
     /// Build Redis connection URL
     pub fn connection_url(&self) -> String {
@@ -75,6 +84,9 @@ pub struct Config {
 
     /// Redis/Valkey configuration
     pub redis: RedisConfig,
+
+    /// IC (Internet Computer) configuration
+    pub ic: IcConfig,
 
     /// Session TTL in seconds
     pub session_ttl_secs: i64,
@@ -113,6 +125,17 @@ impl Config {
             ca_file_path: env::var("REDIS_CA_FILE_PATH").ok(),
         };
 
+        // IC configuration
+        let ic_identity_pem = env::var("IC_IDENTITY_PEM")
+            .map_err(|_| ConfigError::Missing("IC_IDENTITY_PEM"))?;
+        let bns_canister_id = env::var("BNS_CANISTER_ID")
+            .map_err(|_| ConfigError::Missing("BNS_CANISTER_ID"))?;
+
+        let ic = IcConfig {
+            identity_pem: ic_identity_pem,
+            bns_canister_id,
+        };
+
         Ok(Self {
             port: env::var("PORT")
                 .unwrap_or_else(|_| "8080".to_string())
@@ -130,6 +153,8 @@ impl Config {
                 .ok(),
 
             redis,
+
+            ic,
 
             session_ttl_secs: env::var("SESSION_TTL_SECS")
                 .unwrap_or_else(|_| "86400".to_string()) // 24 hours
