@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::config::IcConfig;
 use crate::domain::CanisterEvent;
 use crate::error::{AppError, Result};
-use crate::infra::bns_canister::{BnsCanisterEvent, BnsResultString, PagingArgs};
+use crate::infra::bns_canister::{BnsCanisterEvent, BnsResultString, GetPoolInfoArgs, PagingArgs, PoolInfo};
 use crate::infra::orchestrator_canister::{InvokeArgs, Result3};
 
 /// Pool creation result
@@ -212,6 +212,31 @@ impl IcAgent {
             .map_err(|e| AppError::Canister(format!("Failed to decode get_events response: {}", e)))?;
 
         Ok(events)
+    }
+
+    /// Call BNS canister get_pool_info method
+    ///
+    /// Gets pool info by pool address to verify the pool belongs to the expected name.
+    pub async fn get_pool_info(&self, pool_address: &str) -> Result<PoolInfo> {
+        let args = GetPoolInfoArgs {
+            pool_address: pool_address.to_string(),
+        };
+        let encoded_args = Encode!(&args)
+            .map_err(|e| AppError::Canister(format!("Failed to encode get_pool_info args: {}", e)))?;
+
+        let response = self
+            .agent
+            .query(&self.bns_canister_id, "get_pool_info")
+            .with_arg(encoded_args)
+            .call()
+            .await
+            .map_err(|e| AppError::Canister(format!("get_pool_info call failed: {}", e)))?;
+
+        // Response type is Option<PoolInfo>
+        let result = Decode!(&response, Option<PoolInfo>)
+            .map_err(|e| AppError::Canister(format!("Failed to decode get_pool_info response: {}", e)))?;
+
+        result.ok_or_else(|| AppError::BadRequest(format!("Pool not found: {}", pool_address)))
     }
 }
 

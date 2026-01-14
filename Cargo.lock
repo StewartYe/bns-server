@@ -409,6 +409,7 @@ dependencies = [
  "base32",
  "base64",
  "bip322",
+ "bitcoin",
  "candid",
  "chrono",
  "crc32fast",

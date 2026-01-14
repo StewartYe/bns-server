@@ -88,6 +88,8 @@ async fn main() -> anyhow::Result<()> {
         ic_agent.clone(),
         postgres_client.clone(),
         redis_client.clone(),
+        http_client.clone(),
+        config.ord_url.clone(),
     ));
 
     // Start background task for get_events polling
