@@ -39,9 +39,6 @@ pub trait PostgresClient: Send + Sync {
     async fn create_listing(&self, listing: &Listing) -> Result<()>;
     async fn update_listing_status(&self, name: &str, status: ListingStatus) -> Result<()>;
     async fn update_listing_price(&self, name: &str, price_sats: u64) -> Result<()>;
-    async fn update_listing_confirmations(&self, id: &str, confirmations: i32) -> Result<()>;
-    async fn update_listing_confirmations_by_name(&self, name: &str, confirmations: i32) -> Result<()>;
-    async fn get_pending_confirmations(&self, threshold: i32) -> Result<Vec<Listing>>;
 
     // Transaction history
     async fn get_user_transactions(
@@ -96,7 +93,6 @@ struct ListingRow {
     updated_at: chrono::DateTime<chrono::Utc>,
     previous_price_sats: Option<i64>,
     tx_id: Option<String>,
-    confirmations: i32,
 }
 
 impl From<ListingRow> for Listing {
@@ -112,7 +108,6 @@ impl From<ListingRow> for Listing {
             updated_at: row.updated_at,
             previous_price_sats: row.previous_price_sats.map(|p| p as u64),
             tx_id: row.tx_id,
-            confirmations: row.confirmations,
         }
     }
 }
@@ -285,7 +280,7 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn get_listing(&self, name: &str) -> Result<Option<Listing>> {
         let row = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, confirmations
+            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id
              FROM listings WHERE name = $1"
         )
         .bind(name)
@@ -297,7 +292,7 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn get_listing_by_id(&self, id: &str) -> Result<Option<Listing>> {
         let row = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, confirmations
+            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id
              FROM listings WHERE id = $1"
         )
         .bind(id)
@@ -309,7 +304,7 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn get_listings_by_seller(&self, address: &str) -> Result<Vec<Listing>> {
         let rows = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, confirmations
+            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id
              FROM listings WHERE seller_address = $1 ORDER BY listed_at DESC"
         )
         .bind(address)
@@ -321,7 +316,7 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn get_active_listings(&self, limit: u32, offset: u32) -> Result<Vec<Listing>> {
         let rows = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, confirmations
+            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id
              FROM listings WHERE status = 'active' ORDER BY listed_at DESC LIMIT $1 OFFSET $2"
         )
         .bind(limit as i64)
@@ -338,7 +333,7 @@ impl PostgresClient for PostgresClientImpl {
             .await?;
 
         let rows = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, confirmations
+            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id
              FROM listings ORDER BY listed_at DESC LIMIT $1 OFFSET $2"
         )
         .bind(limit as i64)
@@ -351,8 +346,8 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn create_listing(&self, listing: &Listing) -> Result<()> {
         sqlx::query(
-            "INSERT INTO listings (id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, confirmations)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+            "INSERT INTO listings (id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         )
         .bind(&listing.id)
         .bind(&listing.name)
@@ -364,7 +359,6 @@ impl PostgresClient for PostgresClientImpl {
         .bind(listing.updated_at)
         .bind(listing.previous_price_sats.map(|p| p as i64))
         .bind(&listing.tx_id)
-        .bind(listing.confirmations)
         .execute(&self.pool)
         .await?;
 
@@ -391,38 +385,6 @@ impl PostgresClient for PostgresClientImpl {
         .await?;
 
         Ok(())
-    }
-
-    async fn update_listing_confirmations(&self, id: &str, confirmations: i32) -> Result<()> {
-        sqlx::query("UPDATE listings SET confirmations = $1, updated_at = NOW() WHERE id = $2")
-            .bind(confirmations)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
-
-    async fn update_listing_confirmations_by_name(&self, name: &str, confirmations: i32) -> Result<()> {
-        sqlx::query("UPDATE listings SET confirmations = $1, updated_at = NOW() WHERE name = $2")
-            .bind(confirmations)
-            .bind(name)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
-
-    async fn get_pending_confirmations(&self, threshold: i32) -> Result<Vec<Listing>> {
-        let rows = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, confirmations
-             FROM listings WHERE confirmations < $1 AND tx_id IS NOT NULL ORDER BY listed_at ASC"
-        )
-        .bind(threshold)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn get_user_transactions(

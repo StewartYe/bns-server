@@ -15,6 +15,8 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
   - [Login (BIP-322)](#login-bip-322)
   - [Get Current User](#get-current-user)
   - [Logout](#logout)
+- [Pool](#pool)
+  - [Get/Create Pool](#getcreate-pool)
 - [Listings](#listings)
   - [Create Listing](#create-listing)
   - [Get All Listings](#get-all-listings)
@@ -408,11 +410,100 @@ Set-Cookie: bns_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0
 
 ---
 
+## Pool
+
+### Get/Create Pool
+
+Get or create a pool address for listing a rune name. This is the first step in the listing process. The pool is a Bitcoin address managed by the BNS canister where the rune will be sent for listing.
+
+**Endpoint:** `POST /v1/pool`
+
+**Authentication:** Required (Bearer token or session cookie)
+
+**Headers:**
+```
+Authorization: Bearer {session_id}
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "name": "MY•RUNE•NAME"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name to get/create a pool for |
+
+**Example:**
+
+```bash
+curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/pool \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "MY•RUNE•NAME"}'
+```
+
+**Success Response:**
+
+```json
+{
+  "name": "MY•RUNE•NAME",
+  "pool_address": "bc1q..."
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `pool_address` | string | Bitcoin address to send the rune to for listing |
+
+**Error Response:**
+
+```json
+{
+  "error": "Error message",
+  "code": "ERROR_CODE"
+}
+```
+
+**Error Codes:**
+
+| Status | Code | Description |
+|--------|------|-------------|
+| `400` | `BAD_REQUEST` | Invalid request body or JSON |
+| `401` | `UNAUTHORIZED` | Authentication required |
+| `403` | `NAME_NOT_OWNED` | Name does not belong to authenticated address |
+| `403` | `INSUFFICIENT_CONFIRMATIONS` | Name has fewer than 3 confirmations |
+| `409` | `POOL_ALREADY_EXISTS` | Pool already exists for this name |
+| `502` | `BACKEND_ERROR` | Ord backend unavailable or returned error |
+| `502` | `CANISTER_ERROR` | BNS canister call failed |
+| `503` | `SERVICE_UNAVAILABLE` | Ord backend not configured |
+| `500` | `INTERNAL_ERROR` | Unexpected server error |
+
+**Workflow:**
+
+1. User authenticates via BIP-322
+2. User calls `POST /v1/pool` with the rune name they want to list
+3. Server verifies:
+   - User is authenticated
+   - Name belongs to user's Bitcoin address (via Ord backend)
+   - Name has at least 3 confirmations
+4. Server calls BNS canister to create/get pool
+5. Server returns the pool address
+6. User sends their rune to the pool address
+7. User calls `POST /v1/listings` to complete the listing
+
+---
+
 ## Listings
 
 ### Create Listing
 
-List a rune name for sale by broadcasting a signed PSBT.
+List a rune name for sale via the IC orchestrator canister invoke flow.
 
 **Endpoint:** `POST /v1/listings`
 
@@ -420,10 +511,35 @@ List a rune name for sale by broadcasting a signed PSBT.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `intentionSet` | object | The intention set containing listing intentions |
+| `intentionSet.txFeeInSats` | number | Transaction fee in satoshis |
+| `intentionSet.initiatorAddress` | string | Initiator's Bitcoin address |
+| `intentionSet.intentions` | array | Array of intentions (see below) |
+| `psbtHex` | string | PSBT hex string (unsigned, will be signed by canister) |
+| `initiatorUtxoProof` | string | Base64 encoded UTXO proof blob from frontend |
+
+**Intention Object:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | string | Action type (e.g., "list") |
+| `exchangeId` | string | Exchange identifier |
+| `poolAddress` | string | Pool address for the listing |
+| `nonce` | number | Transaction nonce |
+| `actionParams` | string | JSON string with action parameters |
+| `inputCoins` | array | Input coin balances |
+| `outputCoins` | array | Output coin destinations |
+| `poolUtxoSpent` | array | Pool UTXOs being spent |
+| `poolUtxoReceived` | array | Pool UTXOs being received |
+
+**Action Parameters (JSON string in `actionParams`):**
+
+| Field | Type | Description |
+|-------|------|-------------|
 | `name` | string | The rune name to list |
-| `priceSats` | number | Price in satoshis |
-| `sellerAddress` | string | Seller's Bitcoin address |
-| `psbt` | string | Base64 encoded signed PSBT (or txid if already broadcast) |
+| `seller_address` | string | Seller's Bitcoin address |
+| `seller_token_address` | string? | Optional token receiving address |
+| `price` | number | Price in satoshis |
 
 **Example:**
 
@@ -431,10 +547,23 @@ List a rune name for sale by broadcasting a signed PSBT.
 curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/listings \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "MY•RUNE•NAME",
-    "priceSats": 100000,
-    "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-    "psbt": "cHNidP8B..."
+    "intentionSet": {
+      "txFeeInSats": 1000,
+      "initiatorAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+      "intentions": [{
+        "action": "ListName",
+        "exchangeId": "BNS_Canister",
+        "poolAddress": "bc1q...",
+        "nonce": 1,
+        "actionParams": "{\"name\":\"MY•RUNE•NAME\",\"seller_address\":\"tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2\",\"price\":100000}",
+        "inputCoins": [],
+        "outputCoins": [],
+        "poolUtxoSpent": [],
+        "poolUtxoReceived": []
+      }]
+    },
+    "psbtHex": "70736274ff...",
+    "initiatorUtxoProof": "base64encodedproof..."
   }'
 ```
 
@@ -446,12 +575,11 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/list
   "txId": "a1b2c3d4e5f6...",
   "name": "MY•RUNE•NAME",
   "priceSats": 100000,
-  "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-  "confirmations": 0
+  "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2"
 }
 ```
 
-> **Note:** The listing starts with status `pending`. Once the transaction reaches 3 confirmations, the status changes to `active`.
+> **Note:** The transaction is submitted to the IC orchestrator canister for processing. Listing status updates are tracked via canister events.
 
 ### Get All Listings
 
@@ -481,12 +609,11 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/listings?li
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "name": "MY•RUNE•NAME",
       "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-      "poolAddress": "",
+      "poolAddress": "bc1q...",
       "priceSats": 100000,
       "status": "pending",
       "listedAt": "2025-12-25T15:24:54.805664Z",
-      "txId": "a1b2c3d4e5f6...",
-      "confirmations": 2
+      "txId": "a1b2c3d4e5f6..."
     }
   ],
   "total": 1

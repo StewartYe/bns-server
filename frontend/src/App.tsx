@@ -122,6 +122,10 @@ function App() {
   const [listNameInput, setListNameInput] = useState('');
   const [listPriceInput, setListPriceInput] = useState('100000');
 
+  // Pool form state
+  const [poolNameInput, setPoolNameInput] = useState('');
+  const [poolAddress, setPoolAddress] = useState<string | null>(null);
+
   // New listings leaderboard
   const [newListings, setNewListings] = useState<ListingMeta[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -365,6 +369,54 @@ function App() {
     setBnsSession(null);
     setIsLoading(false);
     localStorage.removeItem('bns_session_id');
+  };
+
+  const handleGetPool = async () => {
+    try {
+      setIsLoading(true);
+      setPoolAddress(null);
+      addLog('Getting pool for name...');
+
+      const sessionToken = localStorage.getItem('bns_session_id');
+      if (!sessionToken) {
+        addLog('Please login first', 'error');
+        return;
+      }
+
+      const nameToQuery = poolNameInput.trim();
+      if (!nameToQuery) {
+        addLog('Please enter a rune name', 'error');
+        return;
+      }
+
+      addLog(`POST ${BNS_API_URL}/v1/pool`);
+      addLog(`Name: ${nameToQuery}`);
+
+      const response = await fetch(`${BNS_API_URL}/v1/pool`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ name: nameToQuery }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        addLog(`Error: ${data.error} (${data.code})`, 'error');
+        return;
+      }
+
+      setPoolAddress(data.pool_address);
+      addLog('=== POOL ADDRESS ===', 'success');
+      addLog(`Name: ${data.name}`, 'success');
+      addLog(`Pool Address: ${data.pool_address}`, 'success');
+    } catch (error) {
+      addLog(`Get pool error: ${error}`, 'error');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleListName = async () => {
@@ -641,6 +693,51 @@ function App() {
           >
             Clear
           </button>
+        </div>
+
+        <div style={{ marginTop: '20px', borderTop: '1px solid #333', paddingTop: '20px' }}>
+          <div style={styles.label}>Get Pool Address</div>
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Rune name (e.g. UNCOMMONGOODS)"
+              value={poolNameInput}
+              onChange={(e) => setPoolNameInput(e.target.value)}
+              style={{
+                background: '#222',
+                border: '1px solid #444',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: '#fff',
+                fontSize: '1rem',
+                flex: '1',
+                minWidth: '200px',
+              }}
+            />
+            <button
+              style={{
+                ...styles.button,
+                background: '#00b894',
+                ...(isLoading ? styles.buttonDisabled : {}),
+              }}
+              onClick={handleGetPool}
+              disabled={isLoading || !bnsSession}
+            >
+              Get Pool
+            </button>
+          </div>
+          {poolAddress && (
+            <div style={{
+              background: '#1a3a2a',
+              border: '1px solid #00b894',
+              borderRadius: '8px',
+              padding: '15px',
+              marginBottom: '15px',
+            }}>
+              <div style={{ color: '#00b894', fontSize: '0.85rem', marginBottom: '5px' }}>Pool Address:</div>
+              <div style={{ fontFamily: 'monospace', wordBreak: 'break-all', color: '#fff' }}>{poolAddress}</div>
+            </div>
+          )}
         </div>
 
         <div style={{ marginTop: '20px', borderTop: '1px solid #333', paddingTop: '20px' }}>

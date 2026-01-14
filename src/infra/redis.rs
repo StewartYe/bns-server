@@ -71,6 +71,16 @@ impl KeyBuilder {
     pub fn user_sessions(&self, btc_address: &str) -> String {
         self.key(&format!("user_sessions:{}", btc_address))
     }
+
+    // Pending transactions (tx_ids waiting for canister events)
+    pub fn pending_txs(&self) -> String {
+        self.key("pending_txs")
+    }
+
+    // Last processed event offset (for get_events polling)
+    pub fn event_offset(&self) -> String {
+        self.key("event_offset")
+    }
 }
 
 /// Listing info stored in Redis
@@ -79,7 +89,6 @@ pub struct ListingMeta {
     pub name: String,
     pub price_sats: u64,
     pub seller_address: String,
-    pub confirmations: i32,
     pub listed_at: i64, // Unix timestamp
     #[serde(default)]
     pub tx_id: Option<String>,
@@ -121,9 +130,6 @@ pub trait RedisClient: Send + Sync {
     /// Add a new listing to the new_list ranking
     async fn add_new_listing(&self, meta: &ListingMeta) -> Result<()>;
 
-    /// Update listing confirmations in new_list
-    async fn update_listing_confirmations(&self, name: &str, confirmations: i32) -> Result<()>;
-
     /// Get top N newest listings
     async fn get_new_listings(&self, count: usize) -> Result<Vec<ListingMeta>>;
 
@@ -157,6 +163,25 @@ pub trait RedisClient: Send + Sync {
 
     /// Delete all sessions for a user
     async fn delete_user_sessions(&self, btc_address: &str) -> Result<u64>;
+
+    // Pending transaction tracking (for get_events polling)
+
+    /// Add a pending transaction to track
+    async fn add_pending_tx(&self, tx_id: &str, tracking_data: &str) -> Result<()>;
+
+    /// Get all pending transactions
+    async fn get_pending_txs(&self) -> Result<Vec<(String, String)>>;
+
+    /// Remove a pending transaction
+    async fn remove_pending_tx(&self, tx_id: &str) -> Result<()>;
+
+    // Event offset tracking (for get_events polling persistence)
+
+    /// Get the last processed event offset
+    async fn get_event_offset(&self) -> Result<u64>;
+
+    /// Set the last processed event offset
+    async fn set_event_offset(&self, offset: u64) -> Result<()>;
 }
 
 /// Redis client implementation with TLS support and automatic token refresh
@@ -409,29 +434,6 @@ impl RedisClient for RedisClientImpl {
         Ok(())
     }
 
-    async fn update_listing_confirmations(&self, name: &str, confirmations: i32) -> Result<()> {
-        let meta_key = self.keys.rank_meta(name);
-
-        // Get existing metadata
-        if let Some(meta_json) = self.get(&meta_key).await? {
-            if let Ok(mut meta) = serde_json::from_str::<ListingMeta>(&meta_json) {
-                meta.confirmations = confirmations;
-                let updated_json = serde_json::to_string(&meta)?;
-                self.set(&meta_key, &updated_json).await?;
-
-                // Publish update event
-                let channel = self.keys.channel_new_list();
-                let event = serde_json::json!({
-                    "type": "confirmation_update",
-                    "data": meta
-                });
-                self.publish(&channel, &event.to_string()).await?;
-            }
-        }
-
-        Ok(())
-    }
-
     async fn get_new_listings(&self, count: usize) -> Result<Vec<ListingMeta>> {
         let key = self.keys.rank_new_list();
 
@@ -542,6 +544,42 @@ impl RedisClient for RedisClientImpl {
         }
 
         Ok(count)
+    }
+
+    // Pending transaction tracking
+
+    async fn add_pending_tx(&self, tx_id: &str, tracking_data: &str) -> Result<()> {
+        let key = self.keys.pending_txs();
+        self.hset(&key, tx_id, tracking_data).await?;
+        tracing::info!("Added tx_id {} to pending tx tracking", tx_id);
+        Ok(())
+    }
+
+    async fn get_pending_txs(&self) -> Result<Vec<(String, String)>> {
+        let key = self.keys.pending_txs();
+        self.hgetall(&key).await
+    }
+
+    async fn remove_pending_tx(&self, tx_id: &str) -> Result<()> {
+        let key = self.keys.pending_txs();
+        self.hdel(&key, tx_id).await?;
+        tracing::info!("Removed tx_id {} from pending tx tracking", tx_id);
+        Ok(())
+    }
+
+    // Event offset tracking
+
+    async fn get_event_offset(&self) -> Result<u64> {
+        let key = self.keys.event_offset();
+        match self.get(&key).await? {
+            Some(val) => Ok(val.parse().unwrap_or(0)),
+            None => Ok(0),
+        }
+    }
+
+    async fn set_event_offset(&self, offset: u64) -> Result<()> {
+        let key = self.keys.event_offset();
+        self.set(&key, &offset.to_string()).await
     }
 }
 

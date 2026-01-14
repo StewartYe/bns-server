@@ -1,159 +1,119 @@
 //! Listing service
 //!
-//! Handles list_name operations with PSBT broadcasting and confirmation tracking.
+//! Handles list_name operations via orchestrator canister invoke.
 
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Utc;
 use uuid::Uuid;
 
 use crate::domain::{
-    Listing, ListingInfo, ListingStatus, ListNameRequest, ListNameResponse, ListedNamesResponse,
-    FINALIZE_THRESHOLD,
+    ListNameParams, ListNameRequest, ListNameResponse, ListedNamesResponse, ListingInfo,
 };
-use crate::error::Result;
-use crate::infra::{DynBlockchainClient, DynPostgresClient, DynRedisClient, ListingMeta};
+use crate::error::{AppError, Result};
+use crate::infra::orchestrator_canister::InvokeArgs;
+use crate::infra::{DynPostgresClient, DynRedisClient, IcAgent, ListingMeta};
 
 /// Listing service
 pub struct ListingService {
-    blockchain: DynBlockchainClient,
+    ic_agent: Arc<IcAgent>,
     postgres: DynPostgresClient,
     redis: DynRedisClient,
 }
 
 impl ListingService {
     pub fn new(
-        blockchain: DynBlockchainClient,
+        ic_agent: Arc<IcAgent>,
         postgres: DynPostgresClient,
         redis: DynRedisClient,
     ) -> Self {
         Self {
-            blockchain,
+            ic_agent,
             postgres,
             redis,
         }
     }
 
-    /// Initialize pending confirmations queue from PostgreSQL
-    ///
-    /// This should be called on startup to sync any pending listings
-    /// that may have been created before the Redis queue was used.
-    pub async fn init_pending_queue(&self) -> Result<u32> {
-        // Get all pending listings from PostgreSQL
-        let pending = self
-            .postgres
-            .get_pending_confirmations(FINALIZE_THRESHOLD)
-            .await?;
-
-        if pending.is_empty() {
-            tracing::info!("No pending listings to sync to Redis queue");
-            return Ok(0);
-        }
-
-        tracing::info!("Syncing {} pending listings to Redis queue", pending.len());
-
-        let mut synced = 0u32;
-        for listing in pending {
-            let meta = ListingMeta {
-                name: listing.name.clone(),
-                price_sats: listing.price_sats,
-                seller_address: listing.seller_address.clone(),
-                confirmations: listing.confirmations,
-                listed_at: listing.listed_at.timestamp(),
-                tx_id: listing.tx_id.clone(),
-            };
-
-            if let Err(e) = self.redis.add_pending_confirmation(&meta).await {
-                tracing::warn!(
-                    "Failed to sync listing '{}' to pending queue: {:?}",
-                    listing.name,
-                    e
-                );
-            } else {
-                synced += 1;
-            }
-        }
-
-        tracing::info!("Synced {} pending listings to Redis queue", synced);
-        Ok(synced)
-    }
-
-    /// Check if a string looks like a Bitcoin txid (64 hex characters)
-    fn is_txid(s: &str) -> bool {
-        s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
-    }
-
-    /// List a name for sale
+    /// List a name for sale via orchestrator canister
     ///
     /// Flow:
-    /// 1. Broadcast the signed PSBT (or use txid if already broadcast)
-    /// 2. Store listing in database with confirmation=0
-    /// 3. Return listing info with tx_id
+    /// 1. Parse ListNameParams from intention action_params
+    /// 2. Build InvokeArgs and call orchestrator.invoke()
+    /// 3. Store tx_id in Redis for tracking
+    /// 4. Return response with tx_id
+    ///
+    /// Note: Listing is NOT saved to PostgreSQL here.
+    /// The background get_events task will save it when status becomes Pending.
     pub async fn list_name(&self, request: &ListNameRequest) -> Result<ListNameResponse> {
-        // Check if psbt is actually a txid (64 hex chars = already broadcast by wallet)
-        let tx_id = if Self::is_txid(&request.psbt) {
-            tracing::info!("Received txid instead of PSBT, using directly: {}", request.psbt);
-            request.psbt.clone()
-        } else {
-            // Broadcast the PSBT
-            self.blockchain.broadcast_psbt(&request.psbt).await?
-        };
+        // Extract and validate intention
+        let intention = request
+            .intention_set
+            .intentions
+            .first()
+            .ok_or_else(|| AppError::BadRequest("No intention in intention_set".to_string()))?;
 
-        let now = Utc::now();
-        let listing_id = Uuid::new_v4().to_string();
-
-        // Create listing record
-        let listing = Listing {
-            id: listing_id.clone(),
-            name: request.name.clone(),
-            seller_address: request.seller_address.clone(),
-            pool_address: String::new(), // Will be set by canister later
-            price_sats: request.price_sats,
-            status: ListingStatus::Pending,
-            listed_at: now,
-            updated_at: now,
-            previous_price_sats: None,
-            tx_id: Some(tx_id.clone()),
-            confirmations: 0,
-        };
-
-        self.postgres.create_listing(&listing).await?;
-
-        // Add to Redis new_list ranking
-        let listing_meta = ListingMeta {
-            name: request.name.clone(),
-            price_sats: request.price_sats,
-            seller_address: request.seller_address.clone(),
-            confirmations: 0,
-            listed_at: now.timestamp(),
-            tx_id: Some(tx_id.clone()),
-        };
-        tracing::info!("Adding listing to Redis: {:?}", listing_meta);
-        match self.redis.add_new_listing(&listing_meta).await {
-            Ok(_) => tracing::info!("Successfully added listing to Redis new_list"),
-            Err(e) => tracing::error!("Failed to add listing to Redis: {:?}", e),
-        }
-
-        // Add to pending confirmations queue for monitoring
-        match self.redis.add_pending_confirmation(&listing_meta).await {
-            Ok(_) => tracing::info!("Successfully added listing to pending confirmations queue"),
-            Err(e) => tracing::error!("Failed to add listing to pending queue: {:?}", e),
-        }
+        // Parse action_params to get listing details
+        let params: ListNameParams = serde_json::from_str(&intention.action_params)
+            .map_err(|e| AppError::BadRequest(format!("Invalid action_params JSON: {}", e)))?;
 
         tracing::info!(
-            "Created listing {} for name '{}' with tx_id {}",
-            listing_id,
-            request.name,
+            "Processing list_name: name={}, price={}, seller={}",
+            params.name,
+            params.price,
+            params.seller_address
+        );
+
+        // Decode initiator_utxo_proof from base64
+        let proof_bytes = STANDARD
+            .decode(&request.initiator_utxo_proof)
+            .map_err(|e| AppError::BadRequest(format!("Invalid initiator_utxo_proof base64: {}", e)))?;
+
+        // Build InvokeArgs
+        let invoke_args = InvokeArgs {
+            client_info: None,
+            intention_set: request.intention_set.clone(),
+            initiator_utxo_proof: serde_bytes::ByteBuf::from(proof_bytes),
+            psbt_hex: request.psbt_hex.clone(),
+        };
+
+        // Call orchestrator canister invoke
+        let tx_id = self.ic_agent.invoke(invoke_args).await?;
+
+        tracing::info!(
+            "Invoke succeeded for name '{}', tx_id: {}",
+            params.name,
             tx_id
         );
+
+        // Store tx_id in Redis for tracking by get_events background task
+        // Key: pending_tx:<tx_id>, Value: JSON with listing details
+        let tracking_data = serde_json::json!({
+            "name": params.name,
+            "price": params.price,
+            "seller_address": params.seller_address,
+            "pool_address": intention.pool_address,
+            "submitted_at": Utc::now().to_rfc3339(),
+        });
+
+        if let Err(e) = self
+            .redis
+            .add_pending_tx(&tx_id, &tracking_data.to_string())
+            .await
+        {
+            tracing::error!("Failed to add tx_id {} to pending tracking: {:?}", tx_id, e);
+            // Don't fail the request - the invoke already succeeded
+        }
+
+        // Generate a listing ID for the response
+        let listing_id = Uuid::new_v4().to_string();
 
         Ok(ListNameResponse {
             id: listing_id,
             tx_id,
-            name: request.name.clone(),
-            price_sats: request.price_sats,
-            seller_address: request.seller_address.clone(),
-            confirmations: 0,
+            name: params.name,
+            price_sats: params.price,
+            seller_address: params.seller_address,
         })
     }
 
@@ -179,7 +139,6 @@ impl ListingService {
                 status: l.status,
                 listed_at: l.listed_at,
                 tx_id: l.tx_id,
-                confirmations: l.confirmations,
             })
             .collect();
 
@@ -187,130 +146,6 @@ impl ListingService {
             listings: listing_infos,
             total,
         })
-    }
-
-    /// Update confirmations for pending listings
-    ///
-    /// Called by background task every minute.
-    /// Uses Redis pending queue instead of PostgreSQL for efficiency.
-    /// When confirmations >= FINALIZE_THRESHOLD:
-    /// - Remove from pending queue
-    /// - Call bns_canister.list_name (placeholder)
-    pub async fn update_confirmations(&self) -> Result<u32> {
-        // Get pending confirmations from Redis queue
-        let pending = self.redis.get_pending_confirmations().await?;
-
-        if pending.is_empty() {
-            return Ok(0);
-        }
-
-        tracing::debug!("Checking confirmations for {} pending listings", pending.len());
-
-        let mut updated_count = 0u32;
-
-        for listing_meta in pending {
-            if let Some(tx_id) = &listing_meta.tx_id {
-                match self.blockchain.get_transaction_confirmations(tx_id).await {
-                    Ok(Some(confirmations)) => {
-                        let confirmations = confirmations as i32;
-
-                        // Update confirmations in Redis (for display)
-                        if let Err(e) = self
-                            .redis
-                            .update_listing_confirmations(&listing_meta.name, confirmations)
-                            .await
-                        {
-                            tracing::warn!(
-                                "Failed to update Redis confirmations for {}: {:?}",
-                                listing_meta.name,
-                                e
-                            );
-                        }
-
-                        // Update confirmations in PostgreSQL
-                        if let Err(e) = self
-                            .postgres
-                            .update_listing_confirmations_by_name(&listing_meta.name, confirmations)
-                            .await
-                        {
-                            tracing::warn!(
-                                "Failed to update DB confirmations for {}: {:?}",
-                                listing_meta.name,
-                                e
-                            );
-                        }
-
-                        updated_count += 1;
-
-                        // Check if we've reached the threshold
-                        if confirmations >= FINALIZE_THRESHOLD {
-                            tracing::info!(
-                                "Listing '{}' reached {} confirmations (threshold: {})",
-                                listing_meta.name,
-                                confirmations,
-                                FINALIZE_THRESHOLD
-                            );
-
-                            // Remove from pending queue - no longer need to monitor
-                            if let Err(e) = self
-                                .redis
-                                .remove_pending_confirmation(&listing_meta.name)
-                                .await
-                            {
-                                tracing::error!(
-                                    "Failed to remove {} from pending queue: {:?}",
-                                    listing_meta.name,
-                                    e
-                                );
-                            }
-
-                            // Update status to active in PostgreSQL
-                            if let Err(e) = self
-                                .postgres
-                                .update_listing_status(&listing_meta.name, ListingStatus::Active)
-                                .await
-                            {
-                                tracing::error!(
-                                    "Failed to update listing status for {}: {:?}",
-                                    listing_meta.name,
-                                    e
-                                );
-                            }
-
-                            // TODO: Call bns_canister.list_name here
-                            // This will be implemented when bns-canister is deployed
-                            tracing::info!(
-                                "[PLACEHOLDER] Would call bns_canister.list_name for '{}'",
-                                listing_meta.name
-                            );
-                        }
-                    }
-                    Ok(None) => {
-                        tracing::debug!(
-                            "Transaction {} not found for listing '{}'",
-                            tx_id,
-                            listing_meta.name
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to get confirmations for tx {}: {:?}",
-                            tx_id,
-                            e
-                        );
-                    }
-                }
-            } else {
-                tracing::warn!(
-                    "Listing '{}' has no tx_id, removing from pending queue",
-                    listing_meta.name
-                );
-                // Remove invalid entries from queue
-                let _ = self.redis.remove_pending_confirmation(&listing_meta.name).await;
-            }
-        }
-
-        Ok(updated_count)
     }
 
     /// Get newest listings from Redis (for real-time display)

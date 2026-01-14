@@ -1,15 +1,11 @@
 //! Canister client for BNS Server
 //!
-//! Interacts with the ICP BNS Canister for:
-//! - create_pool: Create a new pool for first-time listing
-//! - list_name: Complete listing after broadcast
-//! - delist_name: Remove listing
-//! - buy_and_relist: Purchase and relist
-//! - buy_and_withdraw: Purchase and withdraw
-//! - poll_events: Poll event queue for updates
+//! Interacts with ICP Canisters:
+//! - BNS Canister: create_pool, get_events
+//! - Orchestrator Canister: invoke (for transactions)
 
 use async_trait::async_trait;
-use candid::Principal;
+use candid::{Decode, Encode, Principal};
 use ic_agent::identity::Secp256k1Identity;
 use ic_agent::Agent;
 use std::sync::Arc;
@@ -17,6 +13,8 @@ use std::sync::Arc;
 use crate::config::IcConfig;
 use crate::domain::CanisterEvent;
 use crate::error::{AppError, Result};
+use crate::infra::bns_canister::{BnsCanisterEvent, BnsResultString, PagingArgs};
+use crate::infra::orchestrator_canister::{InvokeArgs, Result3};
 
 /// Pool creation result
 #[derive(Debug, Clone)]
@@ -79,6 +77,7 @@ const IC_MAINNET_URL: &str = "https://ic0.app";
 pub struct IcAgent {
     agent: Agent,
     bns_canister_id: Principal,
+    orchestrator_canister_id: Principal,
 }
 
 impl IcAgent {
@@ -99,14 +98,23 @@ impl IcAgent {
         let bns_canister_id = Principal::from_text(&config.bns_canister_id)
             .map_err(|e| AppError::Internal(format!("Invalid BNS canister ID: {}", e)))?;
 
+        // Parse Orchestrator canister ID
+        let orchestrator_canister_id = Principal::from_text(&config.orchestrator_canister_id)
+            .map_err(|e| AppError::Internal(format!("Invalid Orchestrator canister ID: {}", e)))?;
+
         tracing::info!(
-            "IC Agent initialized: url={}, bns_canister_id={}, principal={}",
+            "IC Agent initialized: url={}, bns_canister_id={}, orchestrator_canister_id={}, principal={}",
             IC_MAINNET_URL,
             bns_canister_id,
+            orchestrator_canister_id,
             agent.get_principal().map(|p| p.to_string()).unwrap_or_else(|_| "unknown".to_string())
         );
 
-        Ok(Self { agent, bns_canister_id })
+        Ok(Self {
+            agent,
+            bns_canister_id,
+            orchestrator_canister_id,
+        })
     }
 
     /// Get the underlying agent
@@ -117,6 +125,93 @@ impl IcAgent {
     /// Get the BNS canister ID
     pub fn bns_canister_id(&self) -> Principal {
         self.bns_canister_id
+    }
+
+    /// Get the Orchestrator canister ID
+    pub fn orchestrator_canister_id(&self) -> Principal {
+        self.orchestrator_canister_id
+    }
+
+    /// Call BNS canister create_pool method
+    ///
+    /// Creates a new pool for a name, returns the pool address.
+    pub async fn create_pool(&self, name: &str) -> Result<String> {
+        let args = Encode!(&name.to_string())
+            .map_err(|e| AppError::Canister(format!("Failed to encode args: {}", e)))?;
+
+        let response = self
+            .agent
+            .update(&self.bns_canister_id, "create_pool")
+            .with_arg(args)
+            .call_and_wait()
+            .await
+            .map_err(|e| AppError::Canister(format!("create_pool call failed: {}", e)))?;
+
+        let result = Decode!(&response, BnsResultString)
+            .map_err(|e| AppError::Canister(format!("Failed to decode response: {}", e)))?;
+
+        match result {
+            BnsResultString::Ok(pool_address) => {
+                tracing::info!("Created pool for {}: {}", name, pool_address);
+                Ok(pool_address)
+            }
+            BnsResultString::Err(err) => {
+                tracing::warn!("create_pool failed for {}: {}", name, err);
+                Err(AppError::Canister(err))
+            }
+        }
+    }
+
+    /// Call Orchestrator canister invoke method
+    ///
+    /// Submits a transaction for execution. Returns tx_id on success.
+    pub async fn invoke(&self, args: InvokeArgs) -> Result<String> {
+        let encoded_args = Encode!(&args)
+            .map_err(|e| AppError::Canister(format!("Failed to encode invoke args: {}", e)))?;
+
+        let response = self
+            .agent
+            .update(&self.orchestrator_canister_id, "invoke")
+            .with_arg(encoded_args)
+            .call_and_wait()
+            .await
+            .map_err(|e| AppError::Canister(format!("invoke call failed: {}", e)))?;
+
+        let result = Decode!(&response, Result3)
+            .map_err(|e| AppError::Canister(format!("Failed to decode invoke response: {}", e)))?;
+
+        match result {
+            Result3::Ok(tx_id) => {
+                tracing::info!("Invoke succeeded, tx_id: {}", tx_id);
+                Ok(tx_id)
+            }
+            Result3::Err(err) => {
+                tracing::warn!("invoke failed: {}", err);
+                Err(AppError::Canister(err))
+            }
+        }
+    }
+
+    /// Call BNS canister get_events method
+    ///
+    /// Polls events from the BNS canister for tracking transaction status.
+    pub async fn get_events(&self, offset: u64, limit: u64) -> Result<Vec<(String, BnsCanisterEvent)>> {
+        let args = PagingArgs { offset, limit };
+        let encoded_args = Encode!(&args)
+            .map_err(|e| AppError::Canister(format!("Failed to encode get_events args: {}", e)))?;
+
+        let response = self
+            .agent
+            .query(&self.bns_canister_id, "get_events")
+            .with_arg(encoded_args)
+            .call()
+            .await
+            .map_err(|e| AppError::Canister(format!("get_events call failed: {}", e)))?;
+
+        let events = Decode!(&response, Vec<(String, BnsCanisterEvent)>)
+            .map_err(|e| AppError::Canister(format!("Failed to decode get_events response: {}", e)))?;
+
+        Ok(events)
     }
 }
 

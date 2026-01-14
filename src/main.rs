@@ -13,8 +13,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use bns_server::{
     api,
     config::Config,
-    infra::{BlockchainClientImpl, IcAgent, PostgresClientImpl, RedisClientImpl},
-    service::{AuthConfig, AuthService, DynListingService, ListingService},
+    domain::{Listing, ListingStatus},
+    infra::{
+        bns_canister::{BnsCanisterEvent, ReeActionStatus},
+        DynPostgresClient, DynRedisClient, IcAgent, PostgresClientImpl, RedisClientImpl,
+    },
+    service::{AuthConfig, AuthService, ListingService},
     state::AppState,
 };
 
@@ -71,46 +75,31 @@ async fn main() -> anyhow::Result<()> {
     };
     let auth_service = Arc::new(AuthService::new(redis_client.clone(), pool.clone(), auth_config));
 
-    // Initialize blockchain client
-    let ord_url = config.ord_url.as_deref().unwrap_or("http://localhost:80");
-    let blockchain_client = Arc::new(BlockchainClientImpl::new(ord_url, &config.bitcoind_url));
-    tracing::info!("Bitcoin RPC URL: {}", config.bitcoind_url);
-
     // Initialize postgres client wrapper
     let postgres_client = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
-
-    // Initialize listing service
-    let listing_service = Arc::new(ListingService::new(
-        blockchain_client,
-        postgres_client,
-        redis_client.clone(),
-    ));
-
-    // Sync pending listings from PostgreSQL to Redis queue on startup
-    match listing_service.init_pending_queue().await {
-        Ok(count) => {
-            if count > 0 {
-                tracing::info!("Initialized pending queue with {} listings", count);
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to initialize pending queue: {:?}", e);
-        }
-    }
-
-    // Start background task for confirmation updates
-    let listing_service_bg = listing_service.clone();
-    tokio::spawn(async move {
-        confirmation_update_task(listing_service_bg).await;
-    });
-
-    // Create postgres client for AppState (reuse the pool)
-    let postgres_state = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
 
     // Initialize IC Agent
     tracing::info!("Initializing IC Agent...");
     let ic_agent = Arc::new(IcAgent::new(&config.ic).await?);
     tracing::info!("IC Agent initialized");
+
+    // Initialize listing service (now uses IcAgent instead of blockchain client)
+    let listing_service = Arc::new(ListingService::new(
+        ic_agent.clone(),
+        postgres_client.clone(),
+        redis_client.clone(),
+    ));
+
+    // Start background task for get_events polling
+    let ic_agent_bg = ic_agent.clone();
+    let redis_bg = redis_client.clone();
+    let postgres_bg = postgres_client.clone();
+    tokio::spawn(async move {
+        get_events_polling_task(ic_agent_bg, redis_bg, postgres_bg).await;
+    });
+
+    // Create postgres client for AppState (reuse the pool)
+    let postgres_state = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
 
     // Create application state
     let state = AppState::new(
@@ -144,22 +133,191 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Background task to update listing confirmations every minute
-async fn confirmation_update_task(listing_service: DynListingService) {
+/// Background task to poll BNS canister get_events every minute
+///
+/// Checks for ReeActionStatusChanged events and matches with pending tx_ids:
+/// - Pending: Save listing to PostgreSQL
+/// - Finalized: Update status to Active, remove from tracking
+/// - Rejected: Remove from tracking
+async fn get_events_polling_task(
+    ic_agent: Arc<IcAgent>,
+    redis: DynRedisClient,
+    postgres: DynPostgresClient,
+) {
+    use chrono::Utc;
+    use uuid::Uuid;
+
     let interval = Duration::from_secs(60);
-    tracing::info!("Starting confirmation update task (interval: {:?})", interval);
+
+    // Load last event offset from Redis (persisted across restarts)
+    let mut last_event_offset = match redis.get_event_offset().await {
+        Ok(offset) => {
+            tracing::info!("Loaded event offset from Redis: {}", offset);
+            offset
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load event offset from Redis, starting from 0: {:?}", e);
+            0
+        }
+    };
+
+    tracing::info!(
+        "Starting get_events polling task (interval: {:?}, offset: {})",
+        interval,
+        last_event_offset
+    );
 
     loop {
         tokio::time::sleep(interval).await;
 
-        match listing_service.update_confirmations().await {
-            Ok(count) => {
-                if count > 0 {
-                    tracing::info!("Updated confirmations for {} listings", count);
+        // Get pending tx_ids from Redis
+        let pending_txs = match redis.get_pending_txs().await {
+            Ok(txs) => txs,
+            Err(e) => {
+                tracing::error!("Failed to get pending txs from Redis: {:?}", e);
+                continue;
+            }
+        };
+
+        if pending_txs.is_empty() {
+            tracing::debug!("No pending transactions to track");
+            continue;
+        }
+
+        tracing::debug!("Tracking {} pending transactions", pending_txs.len());
+
+        // Poll events from BNS canister
+        let events = match ic_agent.get_events(last_event_offset, 100).await {
+            Ok(events) => events,
+            Err(e) => {
+                tracing::error!("Failed to poll get_events: {:?}", e);
+                continue;
+            }
+        };
+
+        if events.is_empty() {
+            continue;
+        }
+
+        tracing::debug!("Got {} events from BNS canister", events.len());
+
+        // Build a map of pending tx_ids for quick lookup
+        let pending_map: std::collections::HashMap<String, serde_json::Value> = pending_txs
+            .into_iter()
+            .filter_map(|(tx_id, data)| {
+                serde_json::from_str(&data).ok().map(|v| (tx_id, v))
+            })
+            .collect();
+
+        let mut new_offset = last_event_offset;
+
+        for (event_id, event) in events {
+            // Update offset for next poll
+            if let Ok(id) = event_id.parse::<u64>() {
+                if id >= new_offset {
+                    new_offset = id + 1;
                 }
             }
-            Err(e) => {
-                tracing::error!("Failed to update confirmations: {:?}", e);
+
+            // Handle ReeActionStatusChanged events
+            if let BnsCanisterEvent::ReeActionStatusChanged {
+                action_id,
+                status,
+                timestamp_nanos: _,
+            } = event
+            {
+                // Check if this action_id matches any pending tx_id
+                if let Some(tracking_data) = pending_map.get(&action_id) {
+                    tracing::info!(
+                        "Found status change for tracked tx_id {}: {:?}",
+                        action_id,
+                        status
+                    );
+
+                    match status {
+                        ReeActionStatus::Pending => {
+                            // Save listing to PostgreSQL
+                            let name = tracking_data["name"].as_str().unwrap_or("");
+                            let price = tracking_data["price"].as_u64().unwrap_or(0);
+                            let seller_address = tracking_data["seller_address"].as_str().unwrap_or("");
+                            let pool_address = tracking_data["pool_address"].as_str().unwrap_or("");
+
+                            let now = Utc::now();
+                            let listing = Listing {
+                                id: Uuid::new_v4().to_string(),
+                                name: name.to_string(),
+                                seller_address: seller_address.to_string(),
+                                pool_address: pool_address.to_string(),
+                                price_sats: price,
+                                status: ListingStatus::Pending,
+                                listed_at: now,
+                                updated_at: now,
+                                previous_price_sats: None,
+                                tx_id: Some(action_id.clone()),
+                            };
+
+                            if let Err(e) = postgres.create_listing(&listing).await {
+                                tracing::error!(
+                                    "Failed to save listing for {}: {:?}",
+                                    name,
+                                    e
+                                );
+                            } else {
+                                tracing::info!(
+                                    "Saved listing to PostgreSQL: name={}, tx_id={}",
+                                    name,
+                                    action_id
+                                );
+                            }
+                        }
+                        ReeActionStatus::Finalized => {
+                            // Update listing status to Active
+                            let name = tracking_data["name"].as_str().unwrap_or("");
+                            if let Err(e) = postgres.update_listing_status(name, ListingStatus::Active).await {
+                                tracing::error!(
+                                    "Failed to update listing status for {}: {:?}",
+                                    name,
+                                    e
+                                );
+                            } else {
+                                tracing::info!("Tx {} finalized, listing {} is now active", action_id, name);
+                            }
+
+                            // Remove from tracking
+                            if let Err(e) = redis.remove_pending_tx(&action_id).await {
+                                tracing::error!(
+                                    "Failed to remove tx_id {} from tracking: {:?}",
+                                    action_id,
+                                    e
+                                );
+                            }
+                        }
+                        ReeActionStatus::Confirmed(_confirmations) => {
+                            // Confirmation updates are informational only
+                            // The listing status will be updated when Finalized
+                            tracing::debug!(
+                                "Tx {} confirmed with {} confirmations",
+                                action_id,
+                                _confirmations
+                            );
+                        }
+                        ReeActionStatus::Rejected(reason) => {
+                            tracing::warn!("Tx {} rejected: {}", action_id, reason);
+                            // Remove from tracking
+                            let _ = redis.remove_pending_tx(&action_id).await;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Persist the new offset if it changed
+        if new_offset > last_event_offset {
+            last_event_offset = new_offset;
+            if let Err(e) = redis.set_event_offset(last_event_offset).await {
+                tracing::error!("Failed to persist event offset to Redis: {:?}", e);
+            } else {
+                tracing::debug!("Persisted event offset: {}", last_event_offset);
             }
         }
     }

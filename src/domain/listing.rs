@@ -5,9 +5,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Confirmation threshold for finalizing listings
-pub const FINALIZE_THRESHOLD: i32 = 3;
-
 /// Listing status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,8 +44,6 @@ pub struct Listing {
     pub previous_price_sats: Option<u64>,
     /// Bitcoin transaction ID
     pub tx_id: Option<String>,
-    /// Number of confirmations
-    pub confirmations: i32,
 }
 
 /// Request to create a new listing (deprecated, use ListNameRequest)
@@ -58,18 +53,26 @@ pub struct CreateListingRequest {
     pub price_sats: u64,
 }
 
-/// Request to list a name via PSBT
+/// Request to list a name via orchestrator canister invoke
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListNameRequest {
-    /// The name to list
+    /// The intention set containing the listing intention
+    pub intention_set: crate::infra::orchestrator_canister::IntentionSet,
+    /// PSBT hex string (unsigned, will be signed by canister)
+    pub psbt_hex: String,
+    /// Initiator UTXO proof (base64 encoded blob from frontend)
+    pub initiator_utxo_proof: String,
+}
+
+/// Parameters for listing a name (extracted from action_params JSON)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListNameParams {
     pub name: String,
-    /// Price in satoshis
-    pub price_sats: u64,
-    /// Seller's Bitcoin address (initiator_address)
     pub seller_address: String,
-    /// Signed PSBT (base64 encoded) to broadcast
-    pub psbt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seller_token_address: Option<String>,
+    pub price: u64,
 }
 
 /// Response from listing a name
@@ -86,8 +89,6 @@ pub struct ListNameResponse {
     pub price_sats: u64,
     /// Seller's Bitcoin address
     pub seller_address: String,
-    /// Current confirmation count
-    pub confirmations: i32,
 }
 
 /// Response for get_listed_names
@@ -110,7 +111,6 @@ pub struct ListingInfo {
     pub status: ListingStatus,
     pub listed_at: DateTime<Utc>,
     pub tx_id: Option<String>,
-    pub confirmations: i32,
 }
 
 /// Request to update listing price

@@ -54,6 +54,8 @@ pub struct IcConfig {
     pub identity_pem: String,
     /// BNS canister ID
     pub bns_canister_id: String,
+    /// Orchestrator canister ID
+    pub orchestrator_canister_id: String,
 }
 
 impl RedisConfig {
@@ -130,10 +132,13 @@ impl Config {
             .map_err(|_| ConfigError::Missing("IC_IDENTITY_PEM"))?;
         let bns_canister_id = env::var("BNS_CANISTER_ID")
             .map_err(|_| ConfigError::Missing("BNS_CANISTER_ID"))?;
+        let orchestrator_canister_id = env::var("ORCHESTRATOR_CANISTER_ID")
+            .map_err(|_| ConfigError::Missing("ORCHESTRATOR_CANISTER_ID"))?;
 
         let ic = IcConfig {
             identity_pem: ic_identity_pem,
             bns_canister_id,
+            orchestrator_canister_id,
         };
 
         Ok(Self {
