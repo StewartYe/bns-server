@@ -41,8 +41,6 @@ pub struct RedisConfig {
     pub tls: bool,
     /// Use IAM authentication
     pub use_iam: bool,
-    /// Service account for IAM auth
-    pub service_account: Option<String>,
     /// CA certificate file path for TLS
     pub ca_file_path: Option<String>,
 }
@@ -120,7 +118,6 @@ impl Config {
             use_iam: env::var("REDIS_USE_IAM")
                 .map(|v| v == "true")
                 .unwrap_or(false),
-            service_account: env::var("REDIS_SERVICE_ACCOUNT").ok(),
             ca_file_path: env::var("REDIS_CA_FILE_PATH").ok(),
         };
 

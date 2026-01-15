@@ -1,20 +1,29 @@
-//! Redis client for BNS Server
+//! Redis/Valkey client for BNS Server
 //!
-//! Handles:
-//! - Rankings (ZSet operations)
-//! - Caching
-//! - Session management
-//! - Pub/Sub for real-time updates
-//! - Market statistics
+//! Implements connection to Google Cloud Memorystore Valkey with:
+//! - TLS encryption using custom CA certificate
+//! - IAM authentication with automatic token refresh
+//!
+//! Based on: https://docs.cloud.google.com/memorystore/docs/cluster/client-library-connection#go
 
 use async_trait::async_trait;
 use redis::aio::MultiplexedConnection;
-use redis::{AsyncCommands, Client};
+use redis::{AsyncCommands, Client, TlsCertificates};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 use crate::config::{Network, RedisConfig};
 use crate::error::Result;
+
+/// Token refresh interval (5 minutes before checking, like Go example)
+const TOKEN_REFRESH_DURATION: Duration = Duration::from_secs(5 * 60);
+
+/// Token lifetime (1 hour)
+const TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
+
+/// Check token expiry interval (10 seconds, like Go example)
+const CHECK_TOKEN_EXPIRY_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Redis key builder with network prefix
 pub struct KeyBuilder {
@@ -199,99 +208,161 @@ pub trait RedisClient: Send + Sync {
     async fn set_event_offset(&self, offset: u64) -> Result<()>;
 }
 
-/// Redis client implementation with TLS support and automatic token refresh
-///
-/// Uses a fresh connection for each operation when IAM auth is enabled to avoid
-/// issues with MultiplexedConnection internal reconnects losing auth state.
-pub struct RedisClientImpl {
-    config: RedisConfig,
-    keys: KeyBuilder,
-    /// Cached token and its fetch time
-    token_cache: Arc<Mutex<Option<(String, std::time::Instant)>>>,
+/// Token cache for IAM authentication
+struct TokenCache {
+    token: String,
+    last_refresh_instant: Instant,
+    last_error: Option<String>,
 }
 
-// Token refresh interval (50 minutes, before 1-hour expiry)
-const TOKEN_REFRESH_SECS: u64 = 50 * 60;
+/// Redis client implementation with TLS and IAM authentication
+///
+/// Follows the Go example from Google Cloud documentation:
+/// - Loads CA certificate for TLS
+/// - Background token refresh loop
+/// - Uses "default" username with access token as password
+pub struct RedisClientImpl {
+    /// Redis client with TLS configured
+    client: Client,
+    /// Key builder for network-prefixed keys
+    keys: KeyBuilder,
+    /// Whether IAM auth is enabled
+    use_iam: bool,
+    /// Token cache (shared with background refresh task)
+    token_cache: Arc<RwLock<Option<TokenCache>>>,
+}
 
 impl RedisClientImpl {
+    /// Create a new Redis client following the Go example pattern
     pub async fn new(config: &RedisConfig, network: Network) -> Result<Self> {
         tracing::info!(
-            "Connecting to Redis at {}:{} (TLS: {}, IAM: {})",
+            "Connecting to Valkey at {}:{} (TLS: {}, IAM: {})",
             config.host,
             config.port,
             config.tls,
             config.use_iam
         );
 
-        // Test connection on startup
-        let client = Self {
-            config: config.clone(),
-            keys: KeyBuilder::new(network),
-            token_cache: Arc::new(Mutex::new(None)),
+        // Build connection URL
+        let scheme = if config.tls { "rediss" } else { "redis" };
+        let url = format!("{}://{}:{}", scheme, config.host, config.port);
+
+        // Create client with TLS if enabled
+        let client = if config.tls {
+            // Load CA certificate from file (like Go example: caCert, err := ioutil.ReadFile(caFilePath))
+            let ca_cert = if let Some(ref ca_path) = config.ca_file_path {
+                tracing::info!("Loading CA certificate from: {}", ca_path);
+                let cert_data = tokio::fs::read(ca_path).await.map_err(|e| {
+                    crate::error::AppError::Internal(format!(
+                        "Failed to read CA certificate from {}: {}",
+                        ca_path, e
+                    ))
+                })?;
+                Some(cert_data)
+            } else {
+                tracing::warn!("No CA certificate file configured, using system root certificates");
+                None
+            };
+
+            // Build client with TLS (like Go: caCertPool.AppendCertsFromPEM(caCert))
+            let tls_certs = TlsCertificates {
+                client_tls: None, // No client certificate (mTLS not required)
+                root_cert: ca_cert,
+            };
+
+            Client::build_with_tls(url.as_str(), tls_certs).map_err(|e| {
+                crate::error::AppError::Internal(format!("Failed to create TLS Redis client: {}", e))
+            })?
+        } else {
+            Client::open(url.as_str())?
         };
 
-        // Verify we can connect
-        let mut conn = client.get_connection().await?;
+        let token_cache = Arc::new(RwLock::new(None));
+
+        // If using IAM, get initial token (like Go: token, err = retrieveToken())
+        if config.use_iam {
+            let token = Self::retrieve_token().await?;
+            let cache = TokenCache {
+                token,
+                last_refresh_instant: Instant::now(),
+                last_error: None,
+            };
+            *token_cache.write().await = Some(cache);
+            tracing::info!("Initial IAM token retrieved");
+
+            // Start background token refresh loop (like Go: go refreshTokenLoop())
+            let cache_clone = token_cache.clone();
+            tokio::spawn(async move {
+                Self::refresh_token_loop(cache_clone).await;
+            });
+        }
+
+        let redis_client = Self {
+            client,
+            keys: KeyBuilder::new(network),
+            use_iam: config.use_iam,
+            token_cache,
+        };
+
+        // Test connection (like Go: err = client.Set(ctx, "key", "value", 0).Err())
+        let mut conn = redis_client.get_connection().await?;
         let _: String = redis::cmd("PING").query_async(&mut conn).await?;
-        tracing::info!("Connected to Redis successfully (PING OK)");
+        tracing::info!("Connected to Valkey successfully (PING OK)");
 
-        Ok(client)
+        Ok(redis_client)
     }
 
-    /// Get a fresh authenticated connection
-    async fn get_connection(&self) -> Result<MultiplexedConnection> {
-        let url = self.config.connection_url();
-        let client = Client::open(url.as_str())?;
-        let mut conn = client.get_multiplexed_async_connection().await?;
+    /// Background token refresh loop (following Go: func refreshTokenLoop())
+    async fn refresh_token_loop(token_cache: Arc<RwLock<Option<TokenCache>>>) {
+        tracing::info!("Starting token refresh loop");
 
-        // If using IAM auth, authenticate with access token
-        if self.config.use_iam {
-            let token = self.get_cached_token().await?;
+        loop {
+            tokio::time::sleep(CHECK_TOKEN_EXPIRY_INTERVAL).await;
 
-            let auth_result: std::result::Result<String, redis::RedisError> = redis::cmd("AUTH")
-                .arg("default")
-                .arg(&token)
-                .query_async(&mut conn)
-                .await;
+            let should_refresh = {
+                let cache = token_cache.read().await;
+                match &*cache {
+                    Some(c) => c.last_refresh_instant.elapsed() >= TOKEN_REFRESH_DURATION,
+                    None => true,
+                }
+            };
 
-            if let Err(e) = auth_result {
-                tracing::error!("Valkey IAM authentication failed: {:?}", e);
-                return Err(crate::error::AppError::Redis(e));
+            if should_refresh {
+                tracing::debug!("Refreshing IAM access token...");
+                match Self::retrieve_token().await {
+                    Ok(new_token) => {
+                        let mut cache = token_cache.write().await;
+                        *cache = Some(TokenCache {
+                            token: new_token,
+                            last_refresh_instant: Instant::now(),
+                            last_error: None,
+                        });
+                        tracing::debug!("IAM access token refreshed successfully");
+                    }
+                    Err(e) => {
+                        let mut cache = token_cache.write().await;
+                        if let Some(ref mut c) = *cache {
+                            c.last_error = Some(e.to_string());
+                        }
+                        tracing::error!("Failed to refresh IAM access token: {}", e);
+                    }
+                }
             }
         }
-
-        Ok(conn)
     }
 
-    /// Get cached token or fetch a new one if expired
-    async fn get_cached_token(&self) -> Result<String> {
-        let mut cache = self.token_cache.lock().await;
-
-        // Check if we have a valid cached token
-        if let Some((ref token, ref fetched_at)) = *cache {
-            if fetched_at.elapsed().as_secs() < TOKEN_REFRESH_SECS {
-                return Ok(token.clone());
-            }
-        }
-
-        // Fetch new token
-        tracing::info!("Fetching GCP access token for Valkey IAM auth...");
-        let token = Self::get_gcp_access_token().await?;
-        tracing::info!("Got access token (length: {})", token.len());
-
-        *cache = Some((token.clone(), std::time::Instant::now()));
-        Ok(token)
-    }
-
-    /// Get GCP access token from metadata server
-    async fn get_gcp_access_token() -> Result<String> {
+    /// Retrieve token from GCP metadata server
+    /// (Go equivalent: func retrieveToken() (string, error))
+    async fn retrieve_token() -> Result<String> {
         let client = reqwest::Client::new();
         let response = client
             .get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
             .header("Metadata-Flavor", "Google")
             .send()
             .await
-            .map_err(|e| crate::error::AppError::Internal(format!("Failed to get GCP token: {}", e)))?;
+            .map_err(|e| {
+                crate::error::AppError::Internal(format!("Failed to get GCP token: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(crate::error::AppError::Internal(format!(
@@ -310,6 +381,53 @@ impl RedisClientImpl {
         })?;
 
         Ok(token_resp.access_token)
+    }
+
+    /// Get credentials (username, password) following Go: func retrieveTokenFunc() (string, string)
+    async fn retrieve_credentials(&self) -> Option<(String, String)> {
+        let cache = self.token_cache.read().await;
+        match &*cache {
+            Some(c) => {
+                // Check if token is expired (like Go: time.Now().After(lastRefreshInstant.Add(*refreshDuration)))
+                if c.last_refresh_instant.elapsed() >= TOKEN_LIFETIME {
+                    tracing::warn!(
+                        "Token is expired. Last refresh: {:?}, error: {:?}",
+                        c.last_refresh_instant.elapsed(),
+                        c.last_error
+                    );
+                    return None;
+                }
+                // username := "default", password := token
+                Some(("default".to_string(), c.token.clone()))
+            }
+            None => None,
+        }
+    }
+
+    /// Get authenticated connection
+    async fn get_connection(&self) -> Result<MultiplexedConnection> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+
+        // If using IAM, authenticate with access token
+        // (Go equivalent: using CredentialsProvider which returns default + token)
+        if self.use_iam {
+            let (username, password) = self.retrieve_credentials().await.ok_or_else(|| {
+                crate::error::AppError::Internal("IAM token not available or expired".to_string())
+            })?;
+
+            let auth_result: std::result::Result<String, redis::RedisError> = redis::cmd("AUTH")
+                .arg(&username)
+                .arg(&password)
+                .query_async(&mut conn)
+                .await;
+
+            if let Err(e) = auth_result {
+                tracing::error!("Valkey IAM authentication failed: {:?}", e);
+                return Err(crate::error::AppError::Redis(e));
+            }
+        }
+
+        Ok(conn)
     }
 }
 
