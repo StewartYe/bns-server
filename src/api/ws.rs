@@ -135,15 +135,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                     }
                 }
             }
-            Ok(Message::Ping(data)) => {
-                tracing::debug!("Received ping: {:?}", data);
-            }
             Ok(Message::Close(_)) => {
                 tracing::debug!("Client closed WebSocket connection");
                 break;
             }
             Err(e) => {
-                tracing::warn!("WebSocket error: {:?}", e);
+                tracing::debug!("WebSocket disconnected: {:?}", e);
                 break;
             }
             _ => {}
