@@ -11,11 +11,11 @@
 //! - Authorization: Bearer header
 
 use axum::{
+    Json,
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use time::Duration;
@@ -49,10 +49,8 @@ pub async fn authenticate(
 
     // Return both JSON response and Set-Cookie header
     let mut res = Json(response).into_response();
-    res.headers_mut().insert(
-        header::SET_COOKIE,
-        cookie.to_string().parse().unwrap(),
-    );
+    res.headers_mut()
+        .insert(header::SET_COOKIE, cookie.to_string().parse().unwrap());
 
     Ok(res)
 }
@@ -80,10 +78,8 @@ pub async fn logout(State(state): State<AppState>, request: Request) -> Result<R
         .build();
 
     let mut res = StatusCode::NO_CONTENT.into_response();
-    res.headers_mut().insert(
-        header::SET_COOKIE,
-        cookie.to_string().parse().unwrap(),
-    );
+    res.headers_mut()
+        .insert(header::SET_COOKIE, cookie.to_string().parse().unwrap());
 
     Ok(res)
 }

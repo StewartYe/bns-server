@@ -103,8 +103,18 @@ pub trait RedisClient: Send + Sync {
     // ZSet operations for rankings
     async fn zadd(&self, key: &str, score: f64, member: &str) -> Result<()>;
     async fn zrem(&self, key: &str, member: &str) -> Result<()>;
-    async fn zrange_with_scores(&self, key: &str, start: isize, stop: isize) -> Result<Vec<(String, f64)>>;
-    async fn zrevrange_with_scores(&self, key: &str, start: isize, stop: isize) -> Result<Vec<(String, f64)>>;
+    async fn zrange_with_scores(
+        &self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> Result<Vec<(String, f64)>>;
+    async fn zrevrange_with_scores(
+        &self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> Result<Vec<(String, f64)>>;
     async fn zincrby(&self, key: &str, increment: f64, member: &str) -> Result<f64>;
     async fn zcard(&self, key: &str) -> Result<u64>;
 
@@ -156,7 +166,12 @@ pub trait RedisClient: Send + Sync {
     async fn delete_session(&self, session_id: &str) -> Result<()>;
 
     /// Add session ID to user's session set (for invalidating all user sessions)
-    async fn add_user_session(&self, btc_address: &str, session_id: &str, ttl_secs: u64) -> Result<()>;
+    async fn add_user_session(
+        &self,
+        btc_address: &str,
+        session_id: &str,
+        ttl_secs: u64,
+    ) -> Result<()>;
 
     /// Get all session IDs for a user
     async fn get_user_sessions(&self, btc_address: &str) -> Result<Vec<String>>;
@@ -233,12 +248,11 @@ impl RedisClientImpl {
         if self.config.use_iam {
             let token = self.get_cached_token().await?;
 
-            let auth_result: std::result::Result<String, redis::RedisError> =
-                redis::cmd("AUTH")
-                    .arg("default")
-                    .arg(&token)
-                    .query_async(&mut conn)
-                    .await;
+            let auth_result: std::result::Result<String, redis::RedisError> = redis::cmd("AUTH")
+                .arg("default")
+                .arg(&token)
+                .query_async(&mut conn)
+                .await;
 
             if let Err(e) = auth_result {
                 tracing::error!("Valkey IAM authentication failed: {:?}", e);
@@ -317,12 +331,22 @@ impl RedisClient for RedisClientImpl {
         Ok(())
     }
 
-    async fn zrange_with_scores(&self, key: &str, start: isize, stop: isize) -> Result<Vec<(String, f64)>> {
+    async fn zrange_with_scores(
+        &self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> Result<Vec<(String, f64)>> {
         let mut conn = self.get_connection().await?;
         Ok(conn.zrange_withscores(key, start, stop).await?)
     }
 
-    async fn zrevrange_with_scores(&self, key: &str, start: isize, stop: isize) -> Result<Vec<(String, f64)>> {
+    async fn zrevrange_with_scores(
+        &self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> Result<Vec<(String, f64)>> {
         let mut conn = self.get_connection().await?;
         Ok(conn.zrevrange_withscores(key, start, stop).await?)
     }
@@ -438,7 +462,9 @@ impl RedisClient for RedisClientImpl {
         let key = self.keys.rank_new_list();
 
         // Get top N newest (highest scores = most recent)
-        let entries = self.zrevrange_with_scores(&key, 0, (count - 1) as isize).await?;
+        let entries = self
+            .zrevrange_with_scores(&key, 0, (count - 1) as isize)
+            .await?;
 
         let mut listings = Vec::with_capacity(entries.len());
         for (name, _score) in entries {
@@ -505,7 +531,12 @@ impl RedisClient for RedisClientImpl {
         self.del(&key).await
     }
 
-    async fn add_user_session(&self, btc_address: &str, session_id: &str, ttl_secs: u64) -> Result<()> {
+    async fn add_user_session(
+        &self,
+        btc_address: &str,
+        session_id: &str,
+        ttl_secs: u64,
+    ) -> Result<()> {
         let key = self.keys.user_sessions(btc_address);
         let mut conn = self.get_connection().await?;
 

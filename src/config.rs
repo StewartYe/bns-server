@@ -97,14 +97,13 @@ pub struct Config {
 impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, ConfigError> {
-        let database_url = env::var("DATABASE_URL")
-            .map_err(|_| ConfigError::Missing("DATABASE_URL"))?;
+        let database_url =
+            env::var("DATABASE_URL").map_err(|_| ConfigError::Missing("DATABASE_URL"))?;
 
-        let bitcoind_url = env::var("BITCOIND_URL")
-            .map_err(|_| ConfigError::Missing("BITCOIND_URL"))?;
+        let bitcoind_url =
+            env::var("BITCOIND_URL").map_err(|_| ConfigError::Missing("BITCOIND_URL"))?;
 
-        let redis_host = env::var("REDIS_HOST")
-            .map_err(|_| ConfigError::Missing("REDIS_HOST"))?;
+        let redis_host = env::var("REDIS_HOST").map_err(|_| ConfigError::Missing("REDIS_HOST"))?;
 
         let network = match env::var("NETWORK").as_deref() {
             Ok("mainnet") => Network::Mainnet,
@@ -117,9 +116,7 @@ impl Config {
                 .unwrap_or_else(|_| "6379".to_string())
                 .parse()
                 .unwrap_or(6379),
-            tls: env::var("REDIS_TLS")
-                .map(|v| v == "true")
-                .unwrap_or(false),
+            tls: env::var("REDIS_TLS").map(|v| v == "true").unwrap_or(false),
             use_iam: env::var("REDIS_USE_IAM")
                 .map(|v| v == "true")
                 .unwrap_or(false),
@@ -128,10 +125,10 @@ impl Config {
         };
 
         // IC configuration
-        let ic_identity_pem = env::var("IC_IDENTITY_PEM")
-            .map_err(|_| ConfigError::Missing("IC_IDENTITY_PEM"))?;
-        let bns_canister_id = env::var("BNS_CANISTER_ID")
-            .map_err(|_| ConfigError::Missing("BNS_CANISTER_ID"))?;
+        let ic_identity_pem =
+            env::var("IC_IDENTITY_PEM").map_err(|_| ConfigError::Missing("IC_IDENTITY_PEM"))?;
+        let bns_canister_id =
+            env::var("BNS_CANISTER_ID").map_err(|_| ConfigError::Missing("BNS_CANISTER_ID"))?;
         let orchestrator_canister_id = env::var("ORCHESTRATOR_CANISTER_ID")
             .map_err(|_| ConfigError::Missing("ORCHESTRATOR_CANISTER_ID"))?;
 

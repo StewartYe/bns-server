@@ -130,13 +130,21 @@ impl BlockchainClientImpl {
             .await
             .map_err(|e| AppError::Internal(format!("Failed to read RPC response: {}", e)))?;
 
-        tracing::debug!("Bitcoin RPC {} response: {}", method, &response_text[..response_text.len().min(500)]);
+        tracing::debug!(
+            "Bitcoin RPC {} response: {}",
+            method,
+            &response_text[..response_text.len().min(500)]
+        );
 
-        let rpc_response: RpcResponse<T> = serde_json::from_str(&response_text)
-            .map_err(|e| {
-                tracing::error!("Failed to parse RPC response for {}: {}. Response: {}", method, e, &response_text[..response_text.len().min(500)]);
-                AppError::Internal(format!("Failed to parse RPC response: {}", e))
-            })?;
+        let rpc_response: RpcResponse<T> = serde_json::from_str(&response_text).map_err(|e| {
+            tracing::error!(
+                "Failed to parse RPC response for {}: {}. Response: {}",
+                method,
+                e,
+                &response_text[..response_text.len().min(500)]
+            );
+            AppError::Internal(format!("Failed to parse RPC response: {}", e))
+        })?;
 
         if let Some(error) = rpc_response.error {
             return Err(AppError::Internal(format!(
@@ -200,14 +208,12 @@ impl BlockchainClient for BlockchainClientImpl {
         );
 
         if !finalize_result.complete {
-            return Err(AppError::BadRequest(
-                "PSBT is not fully signed".into(),
-            ));
+            return Err(AppError::BadRequest("PSBT is not fully signed".into()));
         }
 
-        let tx_hex = finalize_result.hex.ok_or_else(|| {
-            AppError::Internal("finalizepsbt did not return hex".into())
-        })?;
+        let tx_hex = finalize_result
+            .hex
+            .ok_or_else(|| AppError::Internal("finalizepsbt did not return hex".into()))?;
 
         // Now broadcast the finalized transaction
         self.broadcast_transaction(&tx_hex).await

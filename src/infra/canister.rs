@@ -6,14 +6,16 @@
 
 use async_trait::async_trait;
 use candid::{Decode, Encode, Principal};
-use ic_agent::identity::Secp256k1Identity;
 use ic_agent::Agent;
+use ic_agent::identity::Secp256k1Identity;
 use std::sync::Arc;
 
 use crate::config::IcConfig;
 use crate::domain::CanisterEvent;
 use crate::error::{AppError, Result};
-use crate::infra::bns_canister::{BnsCanisterEvent, BnsResultString, GetPoolInfoArgs, PagingArgs, PoolInfo};
+use crate::infra::bns_canister::{
+    BnsCanisterEvent, BnsResultString, GetPoolInfoArgs, PagingArgs, PoolInfo,
+};
 use crate::infra::orchestrator_canister::{InvokeArgs, Result3};
 
 /// Pool creation result
@@ -107,7 +109,10 @@ impl IcAgent {
             IC_MAINNET_URL,
             bns_canister_id,
             orchestrator_canister_id,
-            agent.get_principal().map(|p| p.to_string()).unwrap_or_else(|_| "unknown".to_string())
+            agent
+                .get_principal()
+                .map(|p| p.to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
         );
 
         Ok(Self {
@@ -195,7 +200,11 @@ impl IcAgent {
     /// Call BNS canister get_events method
     ///
     /// Polls events from the BNS canister for tracking transaction status.
-    pub async fn get_events(&self, offset: u64, limit: u64) -> Result<Vec<(String, BnsCanisterEvent)>> {
+    pub async fn get_events(
+        &self,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Vec<(String, BnsCanisterEvent)>> {
         let args = PagingArgs { offset, limit };
         let encoded_args = Encode!(&args)
             .map_err(|e| AppError::Canister(format!("Failed to encode get_events args: {}", e)))?;
@@ -208,8 +217,9 @@ impl IcAgent {
             .await
             .map_err(|e| AppError::Canister(format!("get_events call failed: {}", e)))?;
 
-        let events = Decode!(&response, Vec<(String, BnsCanisterEvent)>)
-            .map_err(|e| AppError::Canister(format!("Failed to decode get_events response: {}", e)))?;
+        let events = Decode!(&response, Vec<(String, BnsCanisterEvent)>).map_err(|e| {
+            AppError::Canister(format!("Failed to decode get_events response: {}", e))
+        })?;
 
         Ok(events)
     }
@@ -221,8 +231,9 @@ impl IcAgent {
         let args = GetPoolInfoArgs {
             pool_address: pool_address.to_string(),
         };
-        let encoded_args = Encode!(&args)
-            .map_err(|e| AppError::Canister(format!("Failed to encode get_pool_info args: {}", e)))?;
+        let encoded_args = Encode!(&args).map_err(|e| {
+            AppError::Canister(format!("Failed to encode get_pool_info args: {}", e))
+        })?;
 
         let response = self
             .agent
@@ -233,8 +244,9 @@ impl IcAgent {
             .map_err(|e| AppError::Canister(format!("get_pool_info call failed: {}", e)))?;
 
         // Response type is Option<PoolInfo>
-        let result = Decode!(&response, Option<PoolInfo>)
-            .map_err(|e| AppError::Canister(format!("Failed to decode get_pool_info response: {}", e)))?;
+        let result = Decode!(&response, Option<PoolInfo>).map_err(|e| {
+            AppError::Canister(format!("Failed to decode get_pool_info response: {}", e))
+        })?;
 
         result.ok_or_else(|| AppError::BadRequest(format!("Pool not found: {}", pool_address)))
     }

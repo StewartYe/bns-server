@@ -7,8 +7,8 @@
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
 };
@@ -30,10 +30,7 @@ struct SubscriptionMessage {
 }
 
 /// WebSocket handler - unified endpoint for all subscriptions
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
@@ -96,14 +93,17 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
 
                             // Send initial data for the subscription
                             if sub_msg.channel == "new-listings" {
-                                if let Ok(listings) = state.listing_service.get_new_listings(20).await {
+                                if let Ok(listings) =
+                                    state.listing_service.get_new_listings(20).await
+                                {
                                     let msg = serde_json::json!({
                                         "type": "snapshot",
                                         "channel": "new-listings",
                                         "data": listings
                                     });
                                     let mut sender = sender.lock().await;
-                                    let _ = sender.send(Message::Text(msg.to_string().into())).await;
+                                    let _ =
+                                        sender.send(Message::Text(msg.to_string().into())).await;
                                 }
                             }
 

@@ -8,10 +8,10 @@
 use std::collections::HashMap;
 
 use axum::{
-    extract::{Path, Request, State},
-    http::{header, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::{Path, Request, State},
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -211,7 +211,10 @@ pub async fn clear_primary_name(
         .ok_or_else(|| AppError::Unauthorized("Invalid or expired session".into()))?;
 
     // Clear primary name
-    state.postgres.clear_primary_name(&session.btc_address).await?;
+    state
+        .postgres
+        .clear_primary_name(&session.btc_address)
+        .await?;
 
     Ok(Json(PrimaryNameResponse {
         address: session.btc_address,
@@ -247,7 +250,11 @@ pub async fn update_name_metadata(
     // Verify ownership and confirmations
     verify_name_ownership_and_confirmations(&state, &name, &session.btc_address)
         .await
-        .map_err(|_| AppError::Forbidden("Name does not belong to this address or has insufficient confirmations".into()))?;
+        .map_err(|_| {
+            AppError::Forbidden(
+                "Name does not belong to this address or has insufficient confirmations".into(),
+            )
+        })?;
 
     // Get existing metadata or create new
     let now = Utc::now();
@@ -281,5 +288,9 @@ pub async fn update_name_metadata(
         map.insert("email".to_string(), email.clone());
     }
 
-    Ok(Json(NameMetadataResponse { name, metadata: map }).into_response())
+    Ok(Json(NameMetadataResponse {
+        name,
+        metadata: map,
+    })
+    .into_response())
 }

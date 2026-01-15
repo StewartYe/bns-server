@@ -85,11 +85,7 @@ impl TradingService {
     /// Flow:
     /// 1. Call Canister delist_name
     /// 2. Update market status on success
-    pub async fn delist(
-        &self,
-        _request: &DelistRequest,
-        _seller_address: &str,
-    ) -> Result<()> {
+    pub async fn delist(&self, _request: &DelistRequest, _seller_address: &str) -> Result<()> {
         todo!("Implement delist")
     }
 

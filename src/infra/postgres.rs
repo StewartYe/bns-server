@@ -48,11 +48,8 @@ pub trait PostgresClient: Send + Sync {
         offset: u32,
     ) -> Result<Vec<UserTransaction>>;
     async fn create_transaction(&self, tx: &UserTransaction, address: &str) -> Result<()>;
-    async fn update_transaction_status(
-        &self,
-        tx_id: &str,
-        status: TransactionStatus,
-    ) -> Result<()>;
+    async fn update_transaction_status(&self, tx_id: &str, status: TransactionStatus)
+    -> Result<()>;
 
     // Event log
     async fn save_event(&self, event: &CanisterEvent) -> Result<()>;
@@ -213,20 +210,24 @@ impl PostgresClient for PostgresClientImpl {
     }
 
     async fn set_primary_name(&self, address: &str, name: &str) -> Result<()> {
-        sqlx::query("UPDATE users SET primary_name = $1, last_seen_at = NOW() WHERE btc_address = $2")
-            .bind(name)
-            .bind(address)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE users SET primary_name = $1, last_seen_at = NOW() WHERE btc_address = $2",
+        )
+        .bind(name)
+        .bind(address)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
 
     async fn clear_primary_name(&self, address: &str) -> Result<()> {
-        sqlx::query("UPDATE users SET primary_name = NULL, last_seen_at = NOW() WHERE btc_address = $1")
-            .bind(address)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE users SET primary_name = NULL, last_seen_at = NOW() WHERE btc_address = $1",
+        )
+        .bind(address)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }

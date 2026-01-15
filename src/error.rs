@@ -1,9 +1,9 @@
 //! Error types for BNS Server
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -61,7 +61,9 @@ impl IntoResponse for AppError {
             AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR"),
             AppError::Redis(_) => (StatusCode::INTERNAL_SERVER_ERROR, "CACHE_ERROR"),
             AppError::HttpClient(_) => (StatusCode::BAD_GATEWAY, "UPSTREAM_ERROR"),
-            AppError::Serialization(_) => (StatusCode::INTERNAL_SERVER_ERROR, "SERIALIZATION_ERROR"),
+            AppError::Serialization(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "SERIALIZATION_ERROR")
+            }
             AppError::Canister(_) => (StatusCode::BAD_GATEWAY, "CANISTER_ERROR"),
             AppError::Blockchain(_) => (StatusCode::BAD_GATEWAY, "BLOCKCHAIN_ERROR"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),

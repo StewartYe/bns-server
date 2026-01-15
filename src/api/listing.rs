@@ -5,8 +5,8 @@
 //! - GET /v1/listings - Get all listed names
 
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 use serde::Deserialize;
 

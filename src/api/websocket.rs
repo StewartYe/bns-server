@@ -3,13 +3,13 @@
 //! Real-time event notifications for market updates.
 
 use axum::{
+    Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::Response,
     routing::get,
-    Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
@@ -23,10 +23,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// WebSocket upgrade handler
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 

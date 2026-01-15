@@ -15,8 +15,8 @@ use bns_server::{
     config::Config,
     domain::{Listing, ListingStatus},
     infra::{
-        bns_canister::{BnsCanisterEvent, ReeActionStatus},
         DynPostgresClient, DynRedisClient, IcAgent, PostgresClientImpl, RedisClientImpl,
+        bns_canister::{BnsCanisterEvent, ReeActionStatus},
     },
     service::{AuthConfig, AuthService, ListingService},
     state::AppState,
@@ -73,7 +73,11 @@ async fn main() -> anyhow::Result<()> {
     let auth_config = AuthConfig {
         session_ttl_secs: config.session_ttl_secs,
     };
-    let auth_service = Arc::new(AuthService::new(redis_client.clone(), pool.clone(), auth_config));
+    let auth_service = Arc::new(AuthService::new(
+        redis_client.clone(),
+        pool.clone(),
+        auth_config,
+    ));
 
     // Initialize postgres client wrapper
     let postgres_client = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
@@ -158,7 +162,10 @@ async fn get_events_polling_task(
             offset
         }
         Err(e) => {
-            tracing::warn!("Failed to load event offset from Redis, starting from 0: {:?}", e);
+            tracing::warn!(
+                "Failed to load event offset from Redis, starting from 0: {:?}",
+                e
+            );
             0
         }
     };
@@ -206,9 +213,7 @@ async fn get_events_polling_task(
         // Build a map of pending tx_ids for quick lookup
         let pending_map: std::collections::HashMap<String, serde_json::Value> = pending_txs
             .into_iter()
-            .filter_map(|(tx_id, data)| {
-                serde_json::from_str(&data).ok().map(|v| (tx_id, v))
-            })
+            .filter_map(|(tx_id, data)| serde_json::from_str(&data).ok().map(|v| (tx_id, v)))
             .collect();
 
         let mut new_offset = last_event_offset;
@@ -241,7 +246,8 @@ async fn get_events_polling_task(
                             // Save listing to PostgreSQL
                             let name = tracking_data["name"].as_str().unwrap_or("");
                             let price = tracking_data["price"].as_u64().unwrap_or(0);
-                            let seller_address = tracking_data["seller_address"].as_str().unwrap_or("");
+                            let seller_address =
+                                tracking_data["seller_address"].as_str().unwrap_or("");
                             let pool_address = tracking_data["pool_address"].as_str().unwrap_or("");
 
                             let now = Utc::now();
@@ -259,11 +265,7 @@ async fn get_events_polling_task(
                             };
 
                             if let Err(e) = postgres.create_listing(&listing).await {
-                                tracing::error!(
-                                    "Failed to save listing for {}: {:?}",
-                                    name,
-                                    e
-                                );
+                                tracing::error!("Failed to save listing for {}: {:?}", name, e);
                             } else {
                                 tracing::info!(
                                     "Saved listing to PostgreSQL: name={}, tx_id={}",
@@ -275,14 +277,21 @@ async fn get_events_polling_task(
                         ReeActionStatus::Finalized => {
                             // Update listing status to Active
                             let name = tracking_data["name"].as_str().unwrap_or("");
-                            if let Err(e) = postgres.update_listing_status(name, ListingStatus::Active).await {
+                            if let Err(e) = postgres
+                                .update_listing_status(name, ListingStatus::Active)
+                                .await
+                            {
                                 tracing::error!(
                                     "Failed to update listing status for {}: {:?}",
                                     name,
                                     e
                                 );
                             } else {
-                                tracing::info!("Tx {} finalized, listing {} is now active", action_id, name);
+                                tracing::info!(
+                                    "Tx {} finalized, listing {} is now active",
+                                    action_id,
+                                    name
+                                );
                             }
 
                             // Remove from tracking

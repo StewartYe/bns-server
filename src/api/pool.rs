@@ -4,10 +4,10 @@
 //! - POST /v1/pool - Get or create a pool for a name
 
 use axum::{
+    Json,
     extract::{Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -46,10 +46,7 @@ pub struct PoolErrorResponse {
 /// Requires authentication. Verifies that the name belongs to the authenticated
 /// user's address with sufficient confirmations, then calls the BNS canister
 /// to create a pool.
-pub async fn get_pool(
-    State(state): State<AppState>,
-    request: Request,
-) -> Response {
+pub async fn get_pool(State(state): State<AppState>, request: Request) -> Response {
     // Extract session from request extensions (set by auth middleware)
     let session = match request.extensions().get::<UserSession>() {
         Some(s) => s.clone(),
@@ -165,7 +162,10 @@ pub async fn get_pool(
         return (
             StatusCode::FORBIDDEN,
             Json(PoolErrorResponse {
-                error: format!("Name '{}' is not owned by address {}", req.name, session.btc_address),
+                error: format!(
+                    "Name '{}' is not owned by address {}",
+                    req.name, session.btc_address
+                ),
                 code: "NAME_NOT_OWNED".to_string(),
             }),
         )
@@ -189,13 +189,11 @@ pub async fn get_pool(
 
     // Call canister to create pool
     match state.ic_agent.create_pool(&req.name).await {
-        Ok(pool_address) => {
-            Json(GetPoolResponse {
-                name: req.name,
-                pool_address,
-            })
-            .into_response()
-        }
+        Ok(pool_address) => Json(GetPoolResponse {
+            name: req.name,
+            pool_address,
+        })
+        .into_response(),
         Err(AppError::Canister(err)) => {
             // Check if pool already exists (not an error)
             if err.contains("already exists") || err.contains("Pool exists") {

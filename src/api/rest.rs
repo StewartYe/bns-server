@@ -7,15 +7,15 @@
 //! - ShoutOut management
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::domain::*;
 use crate::error::Result;
-use crate::service::{RankingEntry, RankingType, MarketStats};
+use crate::service::{MarketStats, RankingEntry, RankingType};
 use crate::state::AppState;
 
 // ============================================================================
@@ -64,13 +64,14 @@ pub async fn get_rankings(
 ) -> Result<Json<Vec<RankingEntry>>> {
     let ranking_type = parse_ranking_type(&ranking_type)?;
     let limit = query.limit.unwrap_or(20);
-    let rankings = state.market_service.get_ranking(ranking_type, limit).await?;
+    let rankings = state
+        .market_service
+        .get_ranking(ranking_type, limit)
+        .await?;
     Ok(Json(rankings))
 }
 
-pub async fn get_market_stats(
-    State(state): State<AppState>,
-) -> Result<Json<MarketStats>> {
+pub async fn get_market_stats(State(state): State<AppState>) -> Result<Json<MarketStats>> {
     let stats = state.market_service.get_stats().await?;
     Ok(Json(stats))
 }
@@ -121,7 +122,10 @@ pub async fn search_names(
 ) -> Result<Json<NameSearchResult>> {
     let page = query.page.unwrap_or(1);
     let page_size = query.page_size.unwrap_or(20);
-    let result = state.name_service.search(&query.keyword, page, page_size).await?;
+    let result = state
+        .name_service
+        .search(&query.keyword, page, page_size)
+        .await?;
     Ok(Json(result))
 }
 
@@ -150,7 +154,10 @@ pub async fn get_user_history(
 ) -> Result<Json<UserHistory>> {
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
-    let history = state.user_service.get_history(&address, limit, offset).await?;
+    let history = state
+        .user_service
+        .get_history(&address, limit, offset)
+        .await?;
     Ok(Json(history))
 }
 
@@ -219,9 +226,7 @@ pub async fn buy(
 // ShoutOut handlers
 // ============================================================================
 
-pub async fn get_shoutouts(
-    State(state): State<AppState>,
-) -> Result<Json<ShoutOutList>> {
+pub async fn get_shoutouts(State(state): State<AppState>) -> Result<Json<ShoutOutList>> {
     let list = state.shoutout_service.get_active().await?;
     Ok(Json(list))
 }

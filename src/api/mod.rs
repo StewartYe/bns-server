@@ -23,9 +23,8 @@ pub use user::*;
 pub use ws::*;
 
 use axum::{
-    middleware,
+    Router, middleware,
     routing::{delete, get, post, put},
-    Router,
 };
 
 use crate::state::AppState;

@@ -8,10 +8,10 @@
 //! - BIP-322: Bitcoin message signature verification
 
 pub mod bip322;
-pub mod bns_canister;
-pub mod orchestrator_canister;
 mod blockchain;
+pub mod bns_canister;
 mod canister;
+pub mod orchestrator_canister;
 mod postgres;
 mod redis;
 

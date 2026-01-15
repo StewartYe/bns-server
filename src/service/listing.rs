@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use bitcoin::psbt::Psbt;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bitcoin::Address;
+use bitcoin::psbt::Psbt;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -145,12 +145,15 @@ impl ListingService {
 
         // === Inscription Validation ===
         // Verify inputs[0] contains the inscription for this name
-        self.validate_inscription(&params.name, &input0_outpoint).await?;
+        self.validate_inscription(&params.name, &input0_outpoint)
+            .await?;
 
         // Decode initiator_utxo_proof from base64
         let proof_bytes = STANDARD
             .decode(&request.initiator_utxo_proof)
-            .map_err(|e| AppError::BadRequest(format!("Invalid initiator_utxo_proof base64: {}", e)))?;
+            .map_err(|e| {
+                AppError::BadRequest(format!("Invalid initiator_utxo_proof base64: {}", e))
+            })?;
 
         // Build InvokeArgs
         let invoke_args = InvokeArgs {
@@ -252,8 +255,9 @@ impl ListingService {
 
         // Verify outputs[0] goes to pool_address
         let output0 = &unsigned_tx.output[0];
-        let output0_address = Address::from_script(&output0.script_pubkey, bitcoin::Network::Bitcoin)
-            .map_err(|e| AppError::BadRequest(format!("Invalid output[0] script: {}", e)))?;
+        let output0_address =
+            Address::from_script(&output0.script_pubkey, bitcoin::Network::Bitcoin)
+                .map_err(|e| AppError::BadRequest(format!("Invalid output[0] script: {}", e)))?;
 
         if output0_address.to_string() != pool_address {
             return Err(AppError::BadRequest(format!(
@@ -305,9 +309,10 @@ impl ListingService {
     /// 2. Query ord /output/{outpoint} to get the inscriptions on input[0]
     /// 3. Verify the inscription_id from step 1 is in the list from step 2
     async fn validate_inscription(&self, name: &str, input0_outpoint: &str) -> Result<()> {
-        let ord_url = self.ord_url.as_ref().ok_or_else(|| {
-            AppError::Internal("Ord backend URL not configured".to_string())
-        })?;
+        let ord_url = self
+            .ord_url
+            .as_ref()
+            .ok_or_else(|| AppError::Internal("Ord backend URL not configured".to_string()))?;
 
         // Step 1: Get inscription_id for this name
         let rune_url = format!("{}/bns/rune/{}", ord_url, name);
@@ -328,14 +333,13 @@ impl ListingService {
             )));
         }
 
-        let rune_data: BnsRuneResponse = rune_response
-            .json()
-            .await
-            .map_err(|e| AppError::Internal(format!("Failed to parse ord /bns/rune response: {}", e)))?;
-
-        let rune_info = rune_data.result.ok_or_else(|| {
-            AppError::BadRequest(format!("Name '{}' not found", name))
+        let rune_data: BnsRuneResponse = rune_response.json().await.map_err(|e| {
+            AppError::Internal(format!("Failed to parse ord /bns/rune response: {}", e))
         })?;
+
+        let rune_info = rune_data
+            .result
+            .ok_or_else(|| AppError::BadRequest(format!("Name '{}' not found", name)))?;
 
         let expected_inscription_id = &rune_info.inscription_id;
         tracing::debug!(
@@ -363,10 +367,9 @@ impl ListingService {
             )));
         }
 
-        let output_data: OrdOutputResponse = output_response
-            .json()
-            .await
-            .map_err(|e| AppError::Internal(format!("Failed to parse ord /output response: {}", e)))?;
+        let output_data: OrdOutputResponse = output_response.json().await.map_err(|e| {
+            AppError::Internal(format!("Failed to parse ord /output response: {}", e))
+        })?;
 
         // Step 3: Verify inscription_id is in the output's inscriptions
         let inscriptions = output_data.inscriptions.unwrap_or_default();

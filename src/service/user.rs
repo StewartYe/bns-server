@@ -41,13 +41,11 @@ impl UserService {
     /// Get user transaction history
     ///
     /// Includes list/buy/sell/delist with confirmation status
-    pub async fn get_history(
-        &self,
-        address: &str,
-        limit: u32,
-        offset: u32,
-    ) -> Result<UserHistory> {
-        let transactions = self.postgres.get_user_transactions(address, limit, offset).await?;
+    pub async fn get_history(&self, address: &str, limit: u32, offset: u32) -> Result<UserHistory> {
+        let transactions = self
+            .postgres
+            .get_user_transactions(address, limit, offset)
+            .await?;
         Ok(UserHistory {
             btc_address: address.to_string(),
             transactions,

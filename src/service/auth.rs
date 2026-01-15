@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::domain::{AuthResponse, Bip322AuthRequest, User, UserSession};
 use crate::error::Result;
-use crate::infra::{bip322, DynRedisClient};
+use crate::infra::{DynRedisClient, bip322};
 
 /// Auth service configuration
 #[derive(Debug, Clone)]
@@ -92,7 +92,11 @@ fn create_session_token(session_id: &str, session_secret: &str) -> String {
 
 impl AuthService {
     pub fn new(redis: DynRedisClient, pool: sqlx::PgPool, config: AuthConfig) -> Self {
-        Self { redis, pool, config }
+        Self {
+            redis,
+            pool,
+            config,
+        }
     }
 
     /// Authenticate with BIP-322 signature
