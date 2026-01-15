@@ -49,12 +49,14 @@ pub enum UtxoStatus {
 }
 
 #[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoinBalance {
     pub id: String,
     pub value: Nat,
 }
 
 #[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Utxo {
     pub coins: Vec<CoinBalance>,
     pub sats: u64,
@@ -63,18 +65,21 @@ pub struct Utxo {
 }
 
 #[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InputCoin {
     pub coin: CoinBalance,
     pub from: String,
 }
 
 #[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutputCoin {
     pub to: String,
     pub coin: CoinBalance,
 }
 
 #[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Intention {
     pub input_coins: Vec<InputCoin>,
     pub output_coins: Vec<OutputCoin>,
@@ -88,6 +93,7 @@ pub struct Intention {
 }
 
 #[derive(CandidType, Deserialize, Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IntentionSet {
     pub tx_fee_in_sats: u64,
     pub initiator_address: String,
