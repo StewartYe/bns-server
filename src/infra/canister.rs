@@ -1,76 +1,19 @@
 //! Canister client for BNS Server
 //!
 //! Interacts with ICP Canisters:
-//! - BNS Canister: create_pool, get_events
+//! - BNS Canister: create_pool, get_events, get_pool_info
 //! - Orchestrator Canister: invoke (for transactions)
 
-use async_trait::async_trait;
 use candid::{Decode, Encode, Principal};
 use ic_agent::Agent;
 use ic_agent::identity::Secp256k1Identity;
-use std::sync::Arc;
 
 use crate::config::IcConfig;
-use crate::domain::CanisterEvent;
 use crate::error::{AppError, Result};
 use crate::infra::bns_canister::{
     BnsCanisterEvent, BnsResultString, GetPoolInfoArgs, PagingArgs, PoolInfo,
 };
 use crate::infra::orchestrator_canister::{InvokeArgs, Result3};
-
-/// Pool creation result
-#[derive(Debug, Clone)]
-pub struct CreatePoolResult {
-    pub pool_address: String,
-    pub name: String,
-}
-
-/// Buy result
-#[derive(Debug, Clone)]
-pub struct BuyResult {
-    pub success: bool,
-    pub tx_id: Option<String>,
-    pub new_pool_address: Option<String>,
-}
-
-/// Canister client abstraction
-#[async_trait]
-pub trait CanisterClient: Send + Sync {
-    /// Create a new pool for first-time listing
-    async fn create_pool(&self, name: &str, seller_address: &str) -> Result<CreatePoolResult>;
-
-    /// Complete listing after transaction broadcast
-    async fn list_name(
-        &self,
-        name: &str,
-        pool_address: &str,
-        price_sats: u64,
-        tx_id: &str,
-    ) -> Result<()>;
-
-    /// Delist a name
-    async fn delist_name(&self, name: &str, pool_address: &str) -> Result<()>;
-
-    /// Buy and relist at new price
-    async fn buy_and_relist(
-        &self,
-        name: &str,
-        buyer_address: &str,
-        new_price_sats: u64,
-        tx_id: &str,
-    ) -> Result<BuyResult>;
-
-    /// Buy and withdraw to buyer's wallet
-    async fn buy_and_withdraw(
-        &self,
-        name: &str,
-        buyer_address: &str,
-        tx_id: &str,
-    ) -> Result<BuyResult>;
-
-    /// Poll event queue for updates
-    async fn poll_events(&self, last_event_id: Option<&str>) -> Result<Vec<CanisterEvent>>;
-}
 
 /// IC mainnet URL
 const IC_MAINNET_URL: &str = "https://ic0.app";
@@ -251,66 +194,3 @@ impl IcAgent {
         result.ok_or_else(|| AppError::BadRequest(format!("Pool not found: {}", pool_address)))
     }
 }
-
-/// Canister client implementation using IC Agent
-pub struct CanisterClientImpl {
-    ic_agent: Arc<IcAgent>,
-}
-
-impl CanisterClientImpl {
-    pub fn new(ic_agent: Arc<IcAgent>) -> Self {
-        Self { ic_agent }
-    }
-}
-
-#[async_trait]
-impl CanisterClient for CanisterClientImpl {
-    async fn create_pool(&self, _name: &str, _seller_address: &str) -> Result<CreatePoolResult> {
-        // TODO: Implement canister call using self.ic_agent
-        todo!("Implement create_pool canister call")
-    }
-
-    async fn list_name(
-        &self,
-        _name: &str,
-        _pool_address: &str,
-        _price_sats: u64,
-        _tx_id: &str,
-    ) -> Result<()> {
-        // TODO: Implement canister call using self.ic_agent
-        todo!("Implement list_name canister call")
-    }
-
-    async fn delist_name(&self, _name: &str, _pool_address: &str) -> Result<()> {
-        // TODO: Implement canister call using self.ic_agent
-        todo!("Implement delist_name canister call")
-    }
-
-    async fn buy_and_relist(
-        &self,
-        _name: &str,
-        _buyer_address: &str,
-        _new_price_sats: u64,
-        _tx_id: &str,
-    ) -> Result<BuyResult> {
-        // TODO: Implement canister call using self.ic_agent
-        todo!("Implement buy_and_relist canister call")
-    }
-
-    async fn buy_and_withdraw(
-        &self,
-        _name: &str,
-        _buyer_address: &str,
-        _tx_id: &str,
-    ) -> Result<BuyResult> {
-        // TODO: Implement canister call using self.ic_agent
-        todo!("Implement buy_and_withdraw canister call")
-    }
-
-    async fn poll_events(&self, _last_event_id: Option<&str>) -> Result<Vec<CanisterEvent>> {
-        // TODO: Implement canister call using self.ic_agent
-        todo!("Implement poll_events canister call")
-    }
-}
-
-pub type DynCanisterClient = Arc<dyn CanisterClient>;

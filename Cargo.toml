@@ -7,7 +7,6 @@ edition = "2024"
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
 axum-extra = { version = "0.10", features = ["typed-header", "cookie"] }
-tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 time = "0.3"
 
@@ -49,15 +48,11 @@ futures-util = "0.3"
 
 # Encoding
 hex = "0.4"
-base32 = "0.5"
-crc32fast = "1.4"
-urlencoding = "2.1"
 
 # IC Agent
 ic-agent = { version = "0.45", features = ["pem"] }
 candid = "0.10"
 serde_bytes = "0.11"
-k256 = "0.13"
 
 # Bitcoin
 bitcoin = "0.32"

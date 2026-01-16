@@ -4,31 +4,47 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
 
 ## Table of Contents
 
+- [Health Check](#health-check)
 - [Name Resolution](#name-resolution)
   - [Resolve Name](#resolve-name)
   - [Resolve Address](#resolve-address)
-  - [Update Name Metadata](#update-name-metadata)
-- [User Settings](#user-settings)
-  - [Set Primary Name](#set-primary-name)
-  - [Clear Primary Name](#clear-primary-name)
 - [Authentication](#authentication)
   - [Login (BIP-322)](#login-bip-322)
   - [Get Current User](#get-current-user)
   - [Logout](#logout)
-- [Pool](#pool)
+- [Trading](#trading)
   - [Get/Create Pool](#getcreate-pool)
-- [Listings](#listings)
   - [Create Listing](#create-listing)
   - [Get All Listings](#get-all-listings)
+- [User Settings](#user-settings)
+  - [Set Primary Name](#set-primary-name)
+  - [Clear Primary Name](#clear-primary-name)
+  - [Update Name Metadata](#update-name-metadata)
 - [Rankings](#rankings)
   - [Get Ranking](#get-ranking)
 - [WebSocket](#websocket)
   - [Architecture](#architecture)
   - [Connection](#connection)
   - [Subscription Model](#subscription-model)
-  - [Message Types](#message-types)
   - [Channels](#channels)
-- [Health Check](#health-check)
+  - [Message Types](#message-types)
+- [Error Responses](#error-responses)
+
+---
+
+## Health Check
+
+Check if the server is running.
+
+**Endpoint:** `GET /health`
+
+**Example:**
+
+```bash
+curl https://bns-server-testnet-219952077564.us-central1.run.app/health
+```
+
+**Response:** `OK`
 
 ---
 
@@ -149,140 +165,6 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/addresses/t
 | `id` | string | Rune ID (format: `block:index`) |
 | `is_primary` | boolean | Whether this is the user's primary name |
 | `confirmations` | number | Number of blockchain confirmations |
-
-### Update Name Metadata
-
-Update metadata for a name you own. Requires authentication. The name must have at least 3 confirmations.
-
-**Endpoint:** `PUT /v1/names/{name}/metadata`
-
-**Headers:**
-```
-Authorization: Bearer {session_id}
-Content-Type: application/json
-```
-
-**Request Body:**
-
-```json
-{
-  "description": "The official BNS for BNS.ZONE",
-  "url": "https://bns.zone",
-  "twitter": "OmnityBTCdApps",
-  "email": "hi@oct.network"
-}
-```
-
-All fields are optional. Only include the fields you want to set or update.
-
-**Example:**
-
-```bash
-curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/names/P•X•H•M•B•W/metadata \
-  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "description": "My awesome name",
-    "url": "https://example.com"
-  }'
-```
-
-**Response:**
-
-```json
-{
-  "name": "P•X•H•M•B•W",
-  "metadata": {
-    "description": "My awesome name",
-    "url": "https://example.com"
-  }
-}
-```
-
-**Errors:**
-
-| Status | Description |
-|--------|-------------|
-| `400` | Name has fewer than 3 confirmations |
-| `401` | Not authenticated |
-| `403` | Name does not belong to the authenticated address |
-
----
-
-## User Settings
-
-### Set Primary Name
-
-Set a name as your primary name. The name must belong to your address and have at least 3 confirmations.
-
-**Endpoint:** `PUT /v1/user/primary-name`
-
-**Headers:**
-```
-Authorization: Bearer {session_id}
-Content-Type: application/json
-```
-
-**Request Body:**
-
-```json
-{
-  "name": "P•X•H•M•B•W"
-}
-```
-
-**Example:**
-
-```bash
-curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/primary-name \
-  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "P•X•H•M•B•W"}'
-```
-
-**Response:**
-
-```json
-{
-  "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-  "primary_name": "P•X•H•M•B•W"
-}
-```
-
-**Errors:**
-
-| Status | Description |
-|--------|-------------|
-| `400` | Name has fewer than 3 confirmations |
-| `401` | Not authenticated |
-| `403` | Name does not belong to the authenticated address |
-
-### Clear Primary Name
-
-Remove your primary name setting.
-
-**Endpoint:** `DELETE /v1/user/primary-name`
-
-**Headers:**
-```
-Authorization: Bearer {session_id}
-```
-
-**Example:**
-
-```bash
-curl -X DELETE https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/primary-name \
-  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
-```
-
-**Response:**
-
-```json
-{
-  "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-  "primary_name": null
-}
-```
 
 ---
 
@@ -413,13 +295,13 @@ Set-Cookie: bns_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0
 
 ---
 
-## Pool
+## Trading
 
 ### Get/Create Pool
 
 Get or create a pool address for listing a rune name. This is the first step in the listing process. The pool is a Bitcoin address managed by the BNS canister where the rune will be sent for listing.
 
-**Endpoint:** `POST /v1/pool`
+**Endpoint:** `POST /v1/trading/pool`
 
 **Authentication:** Required (Bearer token or session cookie)
 
@@ -444,7 +326,7 @@ Content-Type: application/json
 **Example:**
 
 ```bash
-curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/pool \
+curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/pool \
   -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab" \
   -H "Content-Type: application/json" \
   -d '{"name": "MY•RUNE•NAME"}'
@@ -490,7 +372,7 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/pool
 **Workflow:**
 
 1. User authenticates via BIP-322
-2. User calls `POST /v1/pool` with the rune name they want to list
+2. User calls `POST /v1/trading/pool` with the rune name they want to list
 3. Server verifies:
    - User is authenticated
    - Name belongs to user's Bitcoin address (via Ord backend)
@@ -498,17 +380,13 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/pool
 4. Server calls BNS canister to create/get pool
 5. Server returns the pool address
 6. User sends their rune to the pool address
-7. User calls `POST /v1/listings` to complete the listing
-
----
-
-## Listings
+7. User calls `POST /v1/trading/list` to complete the listing
 
 ### Create Listing
 
 List a rune name for sale via the IC orchestrator canister invoke flow.
 
-**Endpoint:** `POST /v1/listings`
+**Endpoint:** `POST /v1/trading/list`
 
 **Request Body:**
 
@@ -547,7 +425,7 @@ List a rune name for sale via the IC orchestrator canister invoke flow.
 **Example:**
 
 ```bash
-curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/listings \
+curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/list \
   -H "Content-Type: application/json" \
   -d '{
     "intentionSet": {
@@ -588,7 +466,7 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/list
 
 Retrieve all listings with pagination.
 
-**Endpoint:** `GET /v1/listings`
+**Endpoint:** `GET /v1/trading/listings`
 
 **Query Parameters:**
 
@@ -600,7 +478,7 @@ Retrieve all listings with pagination.
 **Example:**
 
 ```bash
-curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/listings?limit=10&offset=0"
+curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/listings?limit=10&offset=0"
 ```
 
 **Response:**
@@ -632,6 +510,140 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/listings?li
 | `sold` | Has been purchased |
 | `delisted` | Removed by owner |
 | `cancelled` | Cancelled due to error |
+
+---
+
+## User Settings
+
+### Set Primary Name
+
+Set a name as your primary name. The name must belong to your address and have at least 3 confirmations.
+
+**Endpoint:** `PUT /v1/user/primary-name`
+
+**Headers:**
+```
+Authorization: Bearer {session_id}
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "name": "P•X•H•M•B•W"
+}
+```
+
+**Example:**
+
+```bash
+curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/primary-name \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "P•X•H•M•B•W"}'
+```
+
+**Response:**
+
+```json
+{
+  "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+  "primary_name": "P•X•H•M•B•W"
+}
+```
+
+**Errors:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Name has fewer than 3 confirmations |
+| `401` | Not authenticated |
+| `403` | Name does not belong to the authenticated address |
+
+### Clear Primary Name
+
+Remove your primary name setting.
+
+**Endpoint:** `DELETE /v1/user/primary-name`
+
+**Headers:**
+```
+Authorization: Bearer {session_id}
+```
+
+**Example:**
+
+```bash
+curl -X DELETE https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/primary-name \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
+```
+
+**Response:**
+
+```json
+{
+  "address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+  "primary_name": null
+}
+```
+
+### Update Name Metadata
+
+Update metadata for a name you own. Requires authentication. The name must have at least 3 confirmations.
+
+**Endpoint:** `PUT /v1/user/names/{name}/metadata`
+
+**Headers:**
+```
+Authorization: Bearer {session_id}
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "description": "The official BNS for BNS.ZONE",
+  "url": "https://bns.zone",
+  "twitter": "OmnityBTCdApps",
+  "email": "hi@oct.network"
+}
+```
+
+All fields are optional. Only include the fields you want to set or update.
+
+**Example:**
+
+```bash
+curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/names/P•X•H•M•B•W/metadata \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "My awesome name",
+    "url": "https://example.com"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "name": "P•X•H•M•B•W",
+  "metadata": {
+    "description": "My awesome name",
+    "url": "https://example.com"
+  }
+}
+```
+
+**Errors:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Name has fewer than 3 confirmations |
+| `401` | Not authenticated |
+| `403` | Name does not belong to the authenticated address |
 
 ---
 
@@ -863,22 +875,6 @@ Clients must explicitly subscribe to channels to receive updates.
 ```json
 {"type": "error", "message": "Already subscribed to new-listings"}
 ```
-
----
-
-## Health Check
-
-Check if the server is running.
-
-**Endpoint:** `GET /health`
-
-**Example:**
-
-```bash
-curl https://bns-server-testnet-219952077564.us-central1.run.app/health
-```
-
-**Response:** `OK`
 
 ---
 

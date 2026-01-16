@@ -1,6 +1,6 @@
-//! Listing domain model
+//! Trading domain model
 //!
-//! Represents market listings for Rune names.
+//! Represents marketplace trading entities for Rune names.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -46,12 +46,30 @@ pub struct Listing {
     pub tx_id: Option<String>,
 }
 
-/// Request to create a new listing (deprecated, use ListNameRequest)
+// ============================================================================
+// Pool API types
+// ============================================================================
+
+/// Request to get or create a pool for listing
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateListingRequest {
+pub struct GetPoolRequest {
+    /// The rune name to get/create pool for
     pub name: String,
-    pub price_sats: u64,
 }
+
+/// Response from get/create pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetPoolResponse {
+    /// The rune name
+    pub name: String,
+    /// The pool address (Bitcoin address)
+    pub pool_address: String,
+}
+
+// ============================================================================
+// List name API types
+// ============================================================================
 
 /// Request to list a name via orchestrator canister invoke
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +77,7 @@ pub struct CreateListingRequest {
 pub struct ListNameRequest {
     /// The intention set containing the listing intention
     pub intention_set: crate::infra::orchestrator_canister::IntentionSet,
-    /// PSBT hex string (unsigned, will be signed by canister)
+    /// PSBT hex string (signed by user)
     pub psbt_hex: String,
     /// Initiator UTXO proof (base64 encoded blob from frontend)
     pub initiator_utxo_proof: String,
@@ -91,10 +109,14 @@ pub struct ListNameResponse {
     pub seller_address: String,
 }
 
-/// Response for get_listed_names
+// ============================================================================
+// Get listings API types
+// ============================================================================
+
+/// Response for get listings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ListedNamesResponse {
+pub struct ListingsResponse {
     pub listings: Vec<ListingInfo>,
     pub total: i64,
 }
@@ -113,12 +135,9 @@ pub struct ListingInfo {
     pub tx_id: Option<String>,
 }
 
-/// Request to update listing price
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateListingRequest {
-    pub name: String,
-    pub new_price_sats: u64,
-}
+// ============================================================================
+// Future: Delist and Buy types
+// ============================================================================
 
 /// Request to delist a name
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,12 +162,4 @@ pub struct BuyRequest {
     pub action: BuyAction,
     /// New price if action is BuyAndRelist
     pub relist_price_sats: Option<u64>,
-}
-
-/// Listing with computed fields for display
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListingDisplay {
-    pub listing: Listing,
-    /// Price change percentage from previous listing
-    pub price_change_pct: Option<f64>,
 }

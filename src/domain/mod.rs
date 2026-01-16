@@ -2,19 +2,13 @@
 //!
 //! Core domain objects:
 //! - Name: Rune name entity
-//! - Listing: Market listing entity
+//! - Trading: Marketplace trading entities (listings, pools)
 //! - User: User identity (Bitcoin address via BIP-322)
-//! - Event: Canister event queue events
-//! - ShoutOut: Promotional messages
 
-mod event;
-mod listing;
 mod name;
-mod shoutout;
+mod trading;
 mod user;
 
-pub use event::*;
-pub use listing::*;
 pub use name::*;
-pub use shoutout::*;
+pub use trading::*;
 pub use user::*;

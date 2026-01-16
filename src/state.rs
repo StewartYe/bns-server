@@ -6,21 +6,24 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::infra::{DynPostgresClient, DynRedisClient, IcAgent};
-use crate::service::{DynAuthService, DynListingService};
+use crate::service::{DynAuthService, DynNameService, DynTradingService, DynUserService};
 
 /// Application state shared across handlers
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
 
-    /// HTTP client for Ord backend requests
-    pub http_client: reqwest::Client,
-
     /// Auth service
     pub auth_service: DynAuthService,
 
-    /// Listing service
-    pub listing_service: DynListingService,
+    /// Name service
+    pub name_service: DynNameService,
+
+    /// User service
+    pub user_service: DynUserService,
+
+    /// Trading service
+    pub trading_service: DynTradingService,
 
     /// Redis client
     pub redis_client: DynRedisClient,
@@ -39,9 +42,10 @@ impl AppState {
     /// Create application state
     pub fn new(
         config: Config,
-        http_client: reqwest::Client,
         auth_service: DynAuthService,
-        listing_service: DynListingService,
+        name_service: DynNameService,
+        user_service: DynUserService,
+        trading_service: DynTradingService,
         redis_client: DynRedisClient,
         postgres: DynPostgresClient,
         db_pool: sqlx::PgPool,
@@ -49,9 +53,10 @@ impl AppState {
     ) -> Self {
         Self {
             config: Arc::new(config),
-            http_client,
             auth_service,
-            listing_service,
+            name_service,
+            user_service,
+            trading_service,
             redis_client,
             postgres,
             db_pool,

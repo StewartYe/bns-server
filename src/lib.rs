@@ -3,18 +3,17 @@
 //! A Rust web server providing:
 //! - BIP-322 authentication (Sign-In With Bitcoin)
 //! - Name resolution (forward/reverse)
-//! - Trading marketplace (list/delist/buy) [future]
-//! - Market rankings and statistics [future]
+//! - Name listing marketplace
 //!
 //! # Architecture
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │                          API Layer                              │
-//! │  Auth (BIP-322) │ SDK API │ REST API │ WebSocket                │
+//! │  Auth (BIP-322) │ SDK API │ Rankings │ WebSocket                │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │                       Service Layer                             │
-//! │  Auth │ Name │ Trading │ Market │ User │ ShoutOut │ Event       │
+//! │  Auth │ Name │ Event │ Listing                                  │
 //! ├─────────────────────────────────────────────────────────────────┤
 //! │                    Infrastructure Layer                         │
 //! │  PostgreSQL │ BIP-322 │ Redis │ Canister │ Blockchain           │

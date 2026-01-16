@@ -5,8 +5,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::TransactionStatus;
-
 /// User entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -75,33 +73,4 @@ pub struct ListedNameInfo {
 pub struct OwnedNameInfo {
     pub name: String,
     pub inscription_id: String,
-}
-
-/// User transaction history response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserHistory {
-    pub btc_address: String,
-    pub transactions: Vec<UserTransaction>,
-}
-
-/// Transaction types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TransactionType {
-    List,
-    Delist,
-    Buy,
-    Sell,
-}
-
-/// A user's transaction record
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserTransaction {
-    pub tx_type: TransactionType,
-    pub name: String,
-    pub price_sats: Option<u64>,
-    pub counterparty: Option<String>,
-    pub status: TransactionStatus,
-    pub tx_id: Option<String>,
-    pub timestamp: DateTime<Utc>,
 }
