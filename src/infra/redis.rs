@@ -7,7 +7,7 @@
 //! Based on: https://docs.cloud.google.com/memorystore/docs/cluster/client-library-connection#go
 
 use async_trait::async_trait;
-use redis::aio::MultiplexedConnection;
+use redis::aio::{MultiplexedConnection, PubSub};
 use redis::{AsyncCommands, Client, TlsCertificates};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -68,8 +68,28 @@ impl KeyBuilder {
         self.key("events")
     }
 
-    pub fn channel_new_list(&self) -> String {
-        self.key("new_list")
+    pub fn channel_new_listings(&self) -> String {
+        self.key("channel:new_listings")
+    }
+
+    pub fn channel_recent_sales(&self) -> String {
+        self.key("channel:recent_sales")
+    }
+
+    pub fn channel_top_earners(&self) -> String {
+        self.key("channel:top_earners")
+    }
+
+    pub fn channel_most_traded(&self) -> String {
+        self.key("channel:most_traded")
+    }
+
+    pub fn channel_top_sales(&self) -> String {
+        self.key("channel:top_sales")
+    }
+
+    pub fn channel_best_deals(&self) -> String {
+        self.key("channel:best_deals")
     }
 
     // Sessions
@@ -206,6 +226,10 @@ pub trait RedisClient: Send + Sync {
 
     /// Set the last processed event offset
     async fn set_event_offset(&self, offset: u64) -> Result<()>;
+
+    /// Get a pub/sub connection for subscribing to channels
+    /// Returns a stream of messages
+    async fn get_pubsub(&self) -> Result<PubSub>;
 }
 
 /// Token cache for IAM authentication
@@ -271,7 +295,10 @@ impl RedisClientImpl {
             };
 
             Client::build_with_tls(url.as_str(), tls_certs).map_err(|e| {
-                crate::error::AppError::Internal(format!("Failed to create TLS Redis client: {}", e))
+                crate::error::AppError::Internal(format!(
+                    "Failed to create TLS Redis client: {}",
+                    e
+                ))
             })?
         } else {
             Client::open(url.as_str())?
@@ -566,7 +593,7 @@ impl RedisClient for RedisClientImpl {
         }
 
         // Publish update event
-        let channel = self.keys.channel_new_list();
+        let channel = self.keys.channel_new_listings();
         let event = serde_json::json!({
             "type": "new_listing",
             "data": meta
@@ -729,6 +756,16 @@ impl RedisClient for RedisClientImpl {
     async fn set_event_offset(&self, offset: u64) -> Result<()> {
         let key = self.keys.event_offset();
         self.set(&key, &offset.to_string()).await
+    }
+
+    async fn get_pubsub(&self) -> Result<PubSub> {
+        // Note: PubSub connections in redis-rs don't support the same AUTH flow
+        // as regular connections. For Google Cloud Memorystore with IAM auth,
+        // the pub/sub functionality relies on VPC-level security.
+        // If IAM auth is required for pub/sub, consider using a different approach
+        // such as embedding credentials in the connection URL.
+        let pubsub = self.client.get_async_pubsub().await?;
+        Ok(pubsub)
     }
 }
 

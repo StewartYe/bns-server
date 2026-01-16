@@ -11,6 +11,7 @@
 mod auth;
 mod listing;
 mod pool;
+mod rankings;
 mod sdk;
 mod user;
 mod ws;
@@ -18,6 +19,7 @@ mod ws;
 pub use auth::*;
 pub use listing::*;
 pub use pool::*;
+pub use rankings::*;
 pub use sdk::*;
 pub use user::*;
 pub use ws::*;
@@ -55,8 +57,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/user/primary-name", delete(user::clear_primary_name))
         // Name metadata endpoints
         .route("/v1/names/{name}/metadata", put(user::update_name_metadata))
-        // Real-time endpoints
-        .route("/v1/listings/new", get(ws::get_new_listings))
+        // Rankings endpoints
+        .route("/v1/rankings/{type}", get(rankings::get_ranking))
+        // WebSocket endpoint
         .route("/v1/ws/connect", get(ws::ws_handler))
         // Merge authenticated routes
         .merge(authenticated_routes)

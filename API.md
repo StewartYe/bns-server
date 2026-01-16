@@ -20,10 +20,13 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
 - [Listings](#listings)
   - [Create Listing](#create-listing)
   - [Get All Listings](#get-all-listings)
-  - [Get New Listings](#get-new-listings)
+- [Rankings](#rankings)
+  - [Get Ranking](#get-ranking)
 - [WebSocket](#websocket)
+  - [Architecture](#architecture)
   - [Connection](#connection)
   - [Subscription Model](#subscription-model)
+  - [Message Types](#message-types)
   - [Channels](#channels)
 - [Health Check](#health-check)
 
@@ -630,32 +633,145 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/listings?li
 | `delisted` | Removed by owner |
 | `cancelled` | Cancelled due to error |
 
-### Get New Listings
+---
 
-Get the 20 newest listings (from Redis cache, faster than database query).
+## Rankings
 
-**Endpoint:** `GET /v1/listings/new`
+Rankings provide sorted lists of items (max 20 per ranking). Use the REST endpoint for initial data snapshot, and WebSocket for real-time delta updates.
+
+### Get Ranking
+
+Get the initial snapshot of a ranking.
+
+**Endpoint:** `GET /v1/rankings/{type}`
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `type` | string | Ranking type (see supported types below) |
+
+**Supported Ranking Types:**
+
+| Type | Description | Status |
+|------|-------------|--------|
+| `new-listings` | Newest 20 listings sorted by listing time | Implemented |
+| `recent-sales` | Recent sales sorted by sale time | Placeholder |
+| `top-earners` | Addresses ranked by cumulative profit | Placeholder |
+| `most-traded` | Names ranked by number of transactions | Placeholder |
+| `top-sales` | Names ranked by highest sale price | Placeholder |
+| `best-deals` | Current listings with highest discount percentage | Placeholder |
 
 **Example:**
 
 ```bash
-curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/listings/new
+curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/rankings/new-listings
 ```
 
-**Response:**
+**Response (new-listings):**
 
 ```json
 {
-  "listings": [
+  "rankingType": "new-listings",
+  "items": [
     {
       "name": "MY•RUNE•NAME",
-      "price_sats": 100000,
-      "seller_address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-      "confirmations": 2,
-      "listed_at": 1735344000,
-      "tx_id": "a1b2c3d4e5f6..."
+      "priceSats": 100000,
+      "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+      "listedAt": 1735344000,
+      "txId": "a1b2c3d4e5f6..."
     }
-  ]
+  ],
+  "total": 1
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `rankingType` | string | The ranking type |
+| `items` | array | List of ranking items (max 20) |
+| `total` | number | Total count of items returned |
+
+**Ranking Item Fields by Type:**
+
+**new-listings:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `priceSats` | number | Price in satoshis |
+| `sellerAddress` | string | Seller's Bitcoin address |
+| `listedAt` | number | Unix timestamp when listed |
+| `txId` | string? | Bitcoin transaction ID (optional) |
+
+**recent-sales:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `priceSats` | number | Sale price in satoshis |
+| `sellerAddress` | string | Seller's Bitcoin address |
+| `buyerAddress` | string | Buyer's Bitcoin address |
+| `soldAt` | number | Unix timestamp when sold |
+| `txId` | string? | Bitcoin transaction ID (optional) |
+
+**top-earners:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `address` | string | Bitcoin address |
+| `totalProfitSats` | number | Total profit in satoshis |
+| `tradeCount` | number | Number of trades |
+
+**most-traded:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `tradeCount` | number | Number of transactions |
+| `lastPriceSats` | number | Last sale price in satoshis |
+| `lastTradedAt` | number | Unix timestamp of last trade |
+
+**top-sales:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `priceSats` | number | Sale price in satoshis |
+| `sellerAddress` | string | Seller's Bitcoin address |
+| `buyerAddress` | string | Buyer's Bitcoin address |
+| `soldAt` | number | Unix timestamp when sold |
+
+**best-deals:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `currentPriceSats` | number | Current listing price in satoshis |
+| `previousPriceSats` | number | Previous price in satoshis |
+| `discountPercent` | number | Discount percentage |
+| `sellerAddress` | string | Seller's Bitcoin address |
+| `listedAt` | number | Unix timestamp when listed |
+
+**Error Response:**
+
+```json
+{
+  "error": "Unknown ranking type: invalid-type",
+  "supported": ["new-listings", "recent-sales", "top-earners", "most-traded", "top-sales", "best-deals"]
+}
+```
+
+**Placeholder Response (for unimplemented rankings):**
+
+```json
+{
+  "rankingType": "recent-sales",
+  "items": [],
+  "total": 0,
+  "message": "This ranking is not yet implemented"
 }
 ```
 
@@ -663,72 +779,24 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/listings/new
 
 ## WebSocket
 
-Real-time updates for listings and other events.
+Real-time delta updates for rankings via Redis Pub/Sub.
+
+### Architecture
+
+The WebSocket system uses a **snapshot + delta** pattern:
+
+1. **Initial Snapshot**: Use `GET /v1/rankings/{type}` to get the full initial data (max 20 items)
+2. **Delta Updates**: Subscribe to WebSocket channel to receive real-time updates when new items are added
+
+When receiving a delta update, clients should prepend the new item to their local list and trim to 20 items.
 
 ### Connection
 
 **Endpoint:** `wss://bns-server-testnet-219952077564.us-central1.run.app/v1/ws/connect`
 
-**JavaScript Example:**
-
-```javascript
-const ws = new WebSocket('wss://bns-server-testnet-219952077564.us-central1.run.app/v1/ws/connect');
-
-ws.onopen = () => {
-  console.log('Connected');
-  // Subscribe to a channel
-  ws.send(JSON.stringify({
-    type: 'subscribe',
-    channel: 'new-listings'
-  }));
-};
-
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log('Received:', data);
-};
-
-ws.onclose = () => {
-  console.log('Disconnected');
-};
-```
-
 ### Subscription Model
 
-The WebSocket uses a subscription-based model. Clients must explicitly subscribe to channels to receive updates.
-
-**Subscribe to a channel:**
-
-```json
-{
-  "type": "subscribe",
-  "channel": "new-listings"
-}
-```
-
-**Unsubscribe from a channel:**
-
-```json
-{
-  "type": "unsubscribe",
-  "channel": "new-listings"
-}
-```
-
-### Message Types
-
-| Type | Description |
-|------|-------------|
-| `subscribed` | Confirmation that subscription was successful |
-| `unsubscribed` | Confirmation that unsubscription was successful |
-| `snapshot` | Initial data sent immediately after subscribing |
-| `update` | Periodic updates (every 5 seconds) |
-
-### Channels
-
-#### `new-listings`
-
-Receive updates about the newest 20 listings.
+Clients must explicitly subscribe to channels to receive updates.
 
 **Subscribe:**
 
@@ -736,119 +804,64 @@ Receive updates about the newest 20 listings.
 {"type": "subscribe", "channel": "new-listings"}
 ```
 
+**Unsubscribe:**
+
+```json
+{"type": "unsubscribe", "channel": "new-listings"}
+```
+
+### Channels
+
+| Channel | Description | Status |
+|---------|-------------|--------|
+| `new-listings` | Delta updates when new listings are added | Implemented |
+| `recent-sales` | Delta updates when sales occur | Placeholder |
+| `top-earners` | Delta updates for top earner rankings | Placeholder |
+| `most-traded` | Delta updates for most traded names | Placeholder |
+| `top-sales` | Delta updates for highest sales | Placeholder |
+| `best-deals` | Delta updates for best deal listings | Placeholder |
+
+### Message Types
+
 **Subscription Confirmation:**
 
 ```json
 {"type": "subscribed", "channel": "new-listings"}
 ```
 
-**Snapshot (sent immediately after subscribe):**
+**Unsubscription Confirmation:**
+
+```json
+{"type": "unsubscribed", "channel": "new-listings"}
+```
+
+**Delta Update:**
 
 ```json
 {
-  "type": "snapshot",
+  "type": "delta",
   "channel": "new-listings",
-  "data": [
-    {
+  "data": {
+    "type": "new_listing",
+    "data": {
       "name": "MY•RUNE•NAME",
       "price_sats": 100000,
       "seller_address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-      "confirmations": 2,
       "listed_at": 1735344000,
       "tx_id": "a1b2c3d4e5f6..."
     }
-  ]
+  }
 }
 ```
 
-**Periodic Update:**
+**Error:**
 
 ```json
-{
-  "type": "update",
-  "channel": "new-listings",
-  "data": [
-    {
-      "name": "MY•RUNE•NAME",
-      "price_sats": 100000,
-      "seller_address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-      "confirmations": 3,
-      "listed_at": 1735344000,
-      "tx_id": "a1b2c3d4e5f6..."
-    }
-  ]
-}
+{"type": "error", "message": "Unknown channel: invalid-channel"}
 ```
 
-### Complete WebSocket Example
-
-```javascript
-class BNSWebSocket {
-  constructor(url) {
-    this.url = url;
-    this.ws = null;
-    this.reconnectInterval = 3000;
-  }
-
-  connect() {
-    this.ws = new WebSocket(this.url);
-
-    this.ws.onopen = () => {
-      console.log('BNS WebSocket connected');
-      // Subscribe to new listings
-      this.subscribe('new-listings');
-    };
-
-    this.ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      this.handleMessage(message);
-    };
-
-    this.ws.onclose = () => {
-      console.log('BNS WebSocket disconnected, reconnecting...');
-      setTimeout(() => this.connect(), this.reconnectInterval);
-    };
-
-    this.ws.onerror = (error) => {
-      console.error('BNS WebSocket error:', error);
-    };
-  }
-
-  subscribe(channel) {
-    this.ws.send(JSON.stringify({
-      type: 'subscribe',
-      channel: channel
-    }));
-  }
-
-  unsubscribe(channel) {
-    this.ws.send(JSON.stringify({
-      type: 'unsubscribe',
-      channel: channel
-    }));
-  }
-
-  handleMessage(message) {
-    switch (message.type) {
-      case 'subscribed':
-        console.log(`Subscribed to ${message.channel}`);
-        break;
-      case 'unsubscribed':
-        console.log(`Unsubscribed from ${message.channel}`);
-        break;
-      case 'snapshot':
-        console.log(`Initial data for ${message.channel}:`, message.data);
-        break;
-      case 'update':
-        console.log(`Update for ${message.channel}:`, message.data);
-        break;
-    }
-  }
-}
-
-// Usage
-const bns = new BNSWebSocket('wss://bns-server-testnet-219952077564.us-central1.run.app/v1/ws/connect');
-bns.connect();
+```json
+{"type": "error", "message": "Already subscribed to new-listings"}
 ```
 
 ---

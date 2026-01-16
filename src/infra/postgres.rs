@@ -40,6 +40,9 @@ pub trait PostgresClient: Send + Sync {
     async fn update_listing_status(&self, name: &str, status: ListingStatus) -> Result<()>;
     async fn update_listing_price(&self, name: &str, price_sats: u64) -> Result<()>;
 
+    /// Get listings for ranking rebuild (pending and active listings)
+    async fn get_listings_for_ranking(&self) -> Result<Vec<Listing>>;
+
     // Transaction history
     async fn get_user_transactions(
         &self,
@@ -386,6 +389,17 @@ impl PostgresClient for PostgresClientImpl {
         .await?;
 
         Ok(())
+    }
+
+    async fn get_listings_for_ranking(&self) -> Result<Vec<Listing>> {
+        let rows = sqlx::query_as::<_, ListingRow>(
+            "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id
+             FROM listings WHERE status IN ('pending', 'active') ORDER BY listed_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn get_user_transactions(

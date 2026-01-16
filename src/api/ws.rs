@@ -1,9 +1,11 @@
 //! WebSocket API for real-time updates
 //!
-//! Provides real-time updates via subscription model:
-//! - Connect to /v1/ws
+//! Provides real-time delta updates via Redis Pub/Sub:
+//! - Connect to /v1/ws/connect
 //! - Send: {"type": "subscribe", "channel": "new-listings"}
-//! - Receive updates for subscribed channels
+//! - Receive delta updates when new listings are added
+//!
+//! For initial data snapshot, use GET /v1/rankings/{type}
 
 use axum::{
     extract::{
@@ -15,9 +17,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::time::interval;
 
 use crate::state::AppState;
 
@@ -29,54 +29,34 @@ struct SubscriptionMessage {
     channel: String,
 }
 
+/// Map channel names to Redis Pub/Sub channel keys
+fn channel_to_redis_key(channel: &str, state: &AppState) -> Option<String> {
+    let keys = state.redis_client.keys();
+    match channel {
+        "new-listings" => Some(keys.channel_new_listings()),
+        "recent-sales" => Some(keys.channel_recent_sales()),
+        "top-earners" => Some(keys.channel_top_earners()),
+        "most-traded" => Some(keys.channel_most_traded()),
+        "top-sales" => Some(keys.channel_top_sales()),
+        "best-deals" => Some(keys.channel_best_deals()),
+        _ => None,
+    }
+}
+
 /// WebSocket handler - unified endpoint for all subscriptions
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
-/// Handle WebSocket connection with subscription model
+/// Handle WebSocket connection with Redis Pub/Sub
 async fn handle_ws(socket: WebSocket, state: AppState) {
     let (sender, mut receiver) = socket.split();
     let sender = Arc::new(Mutex::new(sender));
     let subscriptions: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    // Spawn task to send periodic updates for subscribed channels
-    let sender_clone = sender.clone();
-    let subscriptions_clone = subscriptions.clone();
-    let state_clone = state.clone();
-    let send_task = tokio::spawn(async move {
-        let mut update_interval = interval(Duration::from_secs(5));
-
-        loop {
-            update_interval.tick().await;
-
-            let subs = subscriptions_clone.lock().await;
-            if subs.contains("new-listings") {
-                drop(subs); // Release lock before async operation
-
-                match state_clone.listing_service.get_new_listings(20).await {
-                    Ok(listings) => {
-                        let msg = serde_json::json!({
-                            "type": "update",
-                            "channel": "new-listings",
-                            "data": listings
-                        });
-                        let mut sender = sender_clone.lock().await;
-                        if sender
-                            .send(Message::Text(msg.to_string().into()))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to get listings for WS: {:?}", e);
-                    }
-                }
-            }
-        }
-    });
+    // Active pub/sub tasks (one per subscribed channel)
+    let pubsub_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
+        Arc::new(Mutex::new(Vec::new()));
 
     // Handle incoming messages
     while let Some(msg) = receiver.next().await {
@@ -86,34 +66,74 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 if let Ok(sub_msg) = serde_json::from_str::<SubscriptionMessage>(&text) {
                     match sub_msg.msg_type.as_str() {
                         "subscribe" => {
-                            tracing::info!("Client subscribed to: {}", sub_msg.channel);
                             let mut subs = subscriptions.lock().await;
+
+                            // Check if already subscribed
+                            if subs.contains(&sub_msg.channel) {
+                                let ack = serde_json::json!({
+                                    "type": "error",
+                                    "message": format!("Already subscribed to {}", sub_msg.channel)
+                                });
+                                let mut sender_guard = sender.lock().await;
+                                let _ = sender_guard
+                                    .send(Message::Text(ack.to_string().into()))
+                                    .await;
+                                continue;
+                            }
+
+                            // Get Redis channel key
+                            let Some(redis_channel) =
+                                channel_to_redis_key(&sub_msg.channel, &state)
+                            else {
+                                let ack = serde_json::json!({
+                                    "type": "error",
+                                    "message": format!("Unknown channel: {}", sub_msg.channel)
+                                });
+                                let mut sender_guard = sender.lock().await;
+                                let _ = sender_guard
+                                    .send(Message::Text(ack.to_string().into()))
+                                    .await;
+                                continue;
+                            };
+
+                            tracing::info!("Client subscribing to: {}", sub_msg.channel);
                             subs.insert(sub_msg.channel.clone());
                             drop(subs);
 
-                            // Send initial data for the subscription
-                            if sub_msg.channel == "new-listings" {
-                                if let Ok(listings) =
-                                    state.listing_service.get_new_listings(20).await
+                            // Start Redis Pub/Sub listener for this channel
+                            let sender_clone = sender.clone();
+                            let channel_name = sub_msg.channel.clone();
+                            let state_clone = state.clone();
+
+                            let pubsub_task = tokio::spawn(async move {
+                                if let Err(e) = run_pubsub_listener(
+                                    state_clone,
+                                    redis_channel,
+                                    channel_name.clone(),
+                                    sender_clone,
+                                )
+                                .await
                                 {
-                                    let msg = serde_json::json!({
-                                        "type": "snapshot",
-                                        "channel": "new-listings",
-                                        "data": listings
-                                    });
-                                    let mut sender = sender.lock().await;
-                                    let _ =
-                                        sender.send(Message::Text(msg.to_string().into())).await;
+                                    tracing::warn!(
+                                        "Pub/Sub listener for {} ended: {:?}",
+                                        channel_name,
+                                        e
+                                    );
                                 }
-                            }
+                            });
+
+                            let mut tasks = pubsub_tasks.lock().await;
+                            tasks.push(pubsub_task);
 
                             // Send subscription confirmation
                             let ack = serde_json::json!({
                                 "type": "subscribed",
                                 "channel": sub_msg.channel
                             });
-                            let mut sender = sender.lock().await;
-                            let _ = sender.send(Message::Text(ack.to_string().into())).await;
+                            let mut sender_guard = sender.lock().await;
+                            let _ = sender_guard
+                                .send(Message::Text(ack.to_string().into()))
+                                .await;
                         }
                         "unsubscribe" => {
                             tracing::info!("Client unsubscribed from: {}", sub_msg.channel);
@@ -126,8 +146,10 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 "channel": sub_msg.channel
                             });
                             drop(subs);
-                            let mut sender = sender.lock().await;
-                            let _ = sender.send(Message::Text(ack.to_string().into())).await;
+                            let mut sender_guard = sender.lock().await;
+                            let _ = sender_guard
+                                .send(Message::Text(ack.to_string().into()))
+                                .await;
                         }
                         _ => {
                             tracing::debug!("Unknown message type: {}", sub_msg.msg_type);
@@ -147,28 +169,53 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
         }
     }
 
-    // Clean up
-    send_task.abort();
+    // Clean up - abort all pub/sub listener tasks
+    let tasks = pubsub_tasks.lock().await;
+    for task in tasks.iter() {
+        task.abort();
+    }
 }
 
-/// Get new listings via HTTP (alternative to WebSocket)
-pub async fn get_new_listings(State(state): State<AppState>) -> impl IntoResponse {
-    tracing::info!("GET /v1/listings/new - fetching new listings from Redis");
-    match state.listing_service.get_new_listings(20).await {
-        Ok(listings) => {
-            tracing::info!("Found {} listings in Redis", listings.len());
-            axum::Json(serde_json::json!({
-                "listings": listings
-            }))
-            .into_response()
-        }
-        Err(e) => {
-            tracing::error!("Failed to get new listings: {:?}", e);
-            axum::Json(serde_json::json!({
-                "error": format!("{:?}", e),
-                "listings": []
-            }))
-            .into_response()
+/// Run a Redis Pub/Sub listener and forward messages to WebSocket
+async fn run_pubsub_listener(
+    state: AppState,
+    redis_channel: String,
+    ws_channel: String,
+    sender: Arc<Mutex<futures_util::stream::SplitSink<WebSocket, Message>>>,
+) -> crate::error::Result<()> {
+    use futures_util::StreamExt;
+    use redis::aio::PubSub;
+
+    let mut pubsub: PubSub = state.redis_client.get_pubsub().await?;
+
+    // Subscribe to the Redis channel
+    pubsub.subscribe(&redis_channel).await?;
+    tracing::info!("Subscribed to Redis channel: {}", redis_channel);
+
+    // Get the message stream
+    let mut stream = pubsub.on_message();
+
+    // Forward messages to WebSocket
+    while let Some(msg) = stream.next().await {
+        let payload: String = msg.get_payload().map_err(crate::error::AppError::Redis)?;
+
+        // Forward to WebSocket with channel info
+        let ws_msg = serde_json::json!({
+            "type": "delta",
+            "channel": ws_channel,
+            "data": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(serde_json::Value::String(payload))
+        });
+
+        let mut sender_guard = sender.lock().await;
+        if sender_guard
+            .send(Message::Text(ws_msg.to_string().into()))
+            .await
+            .is_err()
+        {
+            tracing::debug!("WebSocket send failed, stopping pub/sub listener");
+            break;
         }
     }
+
+    Ok(())
 }

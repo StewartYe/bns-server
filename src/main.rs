@@ -15,7 +15,8 @@ use bns_server::{
     config::Config,
     domain::{Listing, ListingStatus},
     infra::{
-        DynPostgresClient, DynRedisClient, IcAgent, PostgresClientImpl, RedisClientImpl,
+        DynPostgresClient, DynRedisClient, IcAgent, ListingMeta, PostgresClientImpl, RedisClient,
+        RedisClientImpl,
         bns_canister::{BnsCanisterEvent, ReeActionStatus},
     },
     service::{AuthConfig, AuthService, ListingService},
@@ -68,6 +69,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Connecting to Redis...");
     let redis_client = Arc::new(RedisClientImpl::new(&config.redis, config.network).await?);
     tracing::info!("Connected to Redis");
+
+    // Rebuild Redis rankings from PostgreSQL (recovery after restart/crash)
+    tracing::info!("Rebuilding Redis rankings from PostgreSQL...");
+    rebuild_rankings_from_postgres(&pool, redis_client.clone()).await?;
+    tracing::info!("Redis rankings rebuilt");
 
     // Initialize auth service (using Redis for sessions)
     let auth_config = AuthConfig {
@@ -273,6 +279,28 @@ async fn get_events_polling_task(
                                     action_id
                                 );
                             }
+
+                            // ZADD to Redis for new-listings ranking
+                            let meta = ListingMeta {
+                                name: name.to_string(),
+                                price_sats: price,
+                                seller_address: seller_address.to_string(),
+                                listed_at: now.timestamp(),
+                                tx_id: Some(action_id.clone()),
+                            };
+
+                            if let Err(e) = redis.add_new_listing(&meta).await {
+                                tracing::error!(
+                                    "Failed to add listing {} to Redis ranking: {:?}",
+                                    name,
+                                    e
+                                );
+                            } else {
+                                tracing::info!(
+                                    "Added listing {} to Redis new-listings ranking",
+                                    name
+                                );
+                            }
                         }
                         ReeActionStatus::Finalized => {
                             // Update listing status to Active
@@ -332,4 +360,64 @@ async fn get_events_polling_task(
             }
         }
     }
+}
+
+/// Rebuild Redis rankings from PostgreSQL on startup
+///
+/// This ensures rankings are consistent after server restart or crash.
+/// Loads all pending/active listings from PostgreSQL and populates Redis.
+async fn rebuild_rankings_from_postgres(
+    pool: &sqlx::PgPool,
+    redis: Arc<RedisClientImpl>,
+) -> anyhow::Result<()> {
+    // Query all pending/active listings from PostgreSQL
+    let rows = sqlx::query_as::<_, ListingRow>(
+        "SELECT id, name, seller_address, pool_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id
+         FROM listings WHERE status IN ('pending', 'active') ORDER BY listed_at DESC LIMIT 100"
+    )
+    .fetch_all(pool)
+    .await?;
+
+    if rows.is_empty() {
+        tracing::info!("No listings to rebuild into Redis rankings");
+        return Ok(());
+    }
+
+    tracing::info!("Rebuilding {} listings into Redis rankings", rows.len());
+
+    for row in rows {
+        let meta = ListingMeta {
+            name: row.name.clone(),
+            price_sats: row.price_sats as u64,
+            seller_address: row.seller_address.clone(),
+            listed_at: row.listed_at.timestamp(),
+            tx_id: row.tx_id.clone(),
+        };
+
+        if let Err(e) = redis.add_new_listing(&meta).await {
+            tracing::warn!("Failed to add listing {} to Redis: {:?}", row.name, e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Database row for listings table (used in rebuild)
+#[derive(Debug, sqlx::FromRow)]
+struct ListingRow {
+    #[allow(dead_code)]
+    id: String,
+    name: String,
+    seller_address: String,
+    #[allow(dead_code)]
+    pool_address: String,
+    price_sats: i64,
+    #[allow(dead_code)]
+    status: String,
+    listed_at: chrono::DateTime<chrono::Utc>,
+    #[allow(dead_code)]
+    updated_at: chrono::DateTime<chrono::Utc>,
+    #[allow(dead_code)]
+    previous_price_sats: Option<i64>,
+    tx_id: Option<String>,
 }
