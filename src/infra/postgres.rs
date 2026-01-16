@@ -62,6 +62,15 @@ pub trait PostgresClient: Send + Sync {
     async fn create_shoutout(&self, shoutout: &ShoutOut) -> Result<()>;
     async fn get_active_shoutouts(&self) -> Result<Vec<ShoutOut>>;
     async fn expire_shoutouts(&self) -> Result<u64>;
+
+    // System state operations (event polling)
+    async fn get_event_offset(&self) -> Result<u64>;
+    async fn set_event_offset(&self, offset: u64) -> Result<()>;
+
+    // Pending transaction tracking (waiting for canister events)
+    async fn add_pending_tx(&self, tx_id: &str, tracking_data: &str) -> Result<()>;
+    async fn get_pending_txs(&self) -> Result<Vec<(String, String)>>;
+    async fn remove_pending_tx(&self, tx_id: &str) -> Result<()>;
 }
 
 /// PostgreSQL client implementation
@@ -441,6 +450,73 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn expire_shoutouts(&self) -> Result<u64> {
         todo!("Implement expire_shoutouts")
+    }
+
+    // System state operations
+
+    async fn get_event_offset(&self) -> Result<u64> {
+        let row: Option<(Option<i64>,)> =
+            sqlx::query_as("SELECT value_int FROM system_state WHERE key = 'event_offset'")
+                .fetch_optional(&self.pool)
+                .await?;
+
+        Ok(row.and_then(|(v,)| v).unwrap_or(0) as u64)
+    }
+
+    async fn set_event_offset(&self, offset: u64) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO system_state (key, value_int, updated_at)
+            VALUES ('event_offset', $1, NOW())
+            ON CONFLICT (key) DO UPDATE SET value_int = $1, updated_at = NOW()
+            "#,
+        )
+        .bind(offset as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // Pending transaction tracking
+
+    async fn add_pending_tx(&self, tx_id: &str, tracking_data: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO pending_txs (tx_id, tracking_data, created_at)
+            VALUES ($1, $2::jsonb, NOW())
+            ON CONFLICT (tx_id) DO UPDATE SET tracking_data = $2::jsonb
+            "#,
+        )
+        .bind(tx_id)
+        .bind(tracking_data)
+        .execute(&self.pool)
+        .await?;
+
+        tracing::info!("Added tx_id {} to pending tx tracking", tx_id);
+        Ok(())
+    }
+
+    async fn get_pending_txs(&self) -> Result<Vec<(String, String)>> {
+        let rows: Vec<(String, serde_json::Value)> =
+            sqlx::query_as("SELECT tx_id, tracking_data FROM pending_txs ORDER BY created_at")
+                .fetch_all(&self.pool)
+                .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(tx_id, data)| (tx_id, data.to_string()))
+            .collect())
+    }
+
+    async fn remove_pending_tx(&self, tx_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM pending_txs WHERE tx_id = $1")
+            .bind(tx_id)
+            .execute(&self.pool)
+            .await?;
+
+        tracing::info!("Removed tx_id {} from pending tx tracking", tx_id);
+        Ok(())
     }
 }
 

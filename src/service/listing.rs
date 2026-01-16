@@ -81,7 +81,7 @@ impl ListingService {
     /// 3. Check for duplicate pending listings
     /// 4. Validate inscription ownership
     /// 5. Build InvokeArgs and call orchestrator.invoke()
-    /// 6. Store tx_id in Redis for tracking
+    /// 6. Store tx_id in database for tracking
     /// 7. Return response with tx_id
     ///
     /// Note: Listing is NOT saved to PostgreSQL here.
@@ -128,7 +128,7 @@ impl ListingService {
 
         // === Duplicate Listing Check ===
         // Check if there's already a pending listing for this name
-        let pending_txs = self.redis.get_pending_txs().await?;
+        let pending_txs = self.postgres.get_pending_txs().await?;
         for (_tx_id, data) in &pending_txs {
             if let Ok(tracking_data) = serde_json::from_str::<serde_json::Value>(data) {
                 if tracking_data["name"].as_str() == Some(&params.name) {
@@ -172,7 +172,7 @@ impl ListingService {
             tx_id
         );
 
-        // Store tx_id in Redis for tracking by get_events background task
+        // Store tx_id in database for tracking by get_events background task
         let tracking_data = serde_json::json!({
             "name": params.name,
             "price": params.price,
@@ -182,7 +182,7 @@ impl ListingService {
         });
 
         if let Err(e) = self
-            .redis
+            .postgres
             .add_pending_tx(&tx_id, &tracking_data.to_string())
             .await
         {

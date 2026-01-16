@@ -161,15 +161,15 @@ async fn get_events_polling_task(
 
     let interval = Duration::from_secs(60);
 
-    // Load last event offset from Redis (persisted across restarts)
-    let mut last_event_offset = match redis.get_event_offset().await {
+    // Load last event offset from database (persisted across restarts)
+    let mut last_event_offset = match postgres.get_event_offset().await {
         Ok(offset) => {
-            tracing::info!("Loaded event offset from Redis: {}", offset);
+            tracing::info!("Loaded event offset from database: {}", offset);
             offset
         }
         Err(e) => {
             tracing::warn!(
-                "Failed to load event offset from Redis, starting from 0: {:?}",
+                "Failed to load event offset from database, starting from 0: {:?}",
                 e
             );
             0
@@ -185,11 +185,11 @@ async fn get_events_polling_task(
     loop {
         tokio::time::sleep(interval).await;
 
-        // Get pending tx_ids from Redis
-        let pending_txs = match redis.get_pending_txs().await {
+        // Get pending tx_ids from database
+        let pending_txs = match postgres.get_pending_txs().await {
             Ok(txs) => txs,
             Err(e) => {
-                tracing::error!("Failed to get pending txs from Redis: {:?}", e);
+                tracing::error!("Failed to get pending txs from database: {:?}", e);
                 continue;
             }
         };
@@ -323,7 +323,7 @@ async fn get_events_polling_task(
                             }
 
                             // Remove from tracking
-                            if let Err(e) = redis.remove_pending_tx(&action_id).await {
+                            if let Err(e) = postgres.remove_pending_tx(&action_id).await {
                                 tracing::error!(
                                     "Failed to remove tx_id {} from tracking: {:?}",
                                     action_id,
@@ -343,7 +343,7 @@ async fn get_events_polling_task(
                         ReeActionStatus::Rejected(reason) => {
                             tracing::warn!("Tx {} rejected: {}", action_id, reason);
                             // Remove from tracking
-                            let _ = redis.remove_pending_tx(&action_id).await;
+                            let _ = postgres.remove_pending_tx(&action_id).await;
                         }
                     }
                 }
@@ -353,8 +353,8 @@ async fn get_events_polling_task(
         // Persist the new offset if it changed
         if new_offset > last_event_offset {
             last_event_offset = new_offset;
-            if let Err(e) = redis.set_event_offset(last_event_offset).await {
-                tracing::error!("Failed to persist event offset to Redis: {:?}", e);
+            if let Err(e) = postgres.set_event_offset(last_event_offset).await {
+                tracing::error!("Failed to persist event offset to database: {:?}", e);
             } else {
                 tracing::debug!("Persisted event offset: {}", last_event_offset);
             }

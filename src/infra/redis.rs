@@ -40,34 +40,57 @@ impl KeyBuilder {
         format!("{}:{}", self.network.key_prefix(), suffix)
     }
 
-    // Rankings
-    pub fn rank_new_list(&self) -> String {
-        self.key("rank:new_list")
+    // ===========================================
+    // Name-based Rankings (ZSet, member=name, 5 types)
+    // Metadata stored in rank:meta:{name}
+    // ===========================================
+
+    /// New listings: score = listed_at (unix timestamp), descending = newest first
+    pub fn rank_new_listings(&self) -> String {
+        self.key("rank:new_listings")
     }
 
-    pub fn rank_last_sold(&self) -> String {
-        self.key("rank:last_sold")
+    /// Recent sales: score = sold_at (unix timestamp), descending = most recent first
+    pub fn rank_recent_sales(&self) -> String {
+        self.key("rank:recent_sales")
     }
 
-    pub fn rank_24h_winners(&self) -> String {
-        self.key("rank:24h_winners")
+    /// Most traded: score = trade_count, descending = most trades first
+    pub fn rank_most_traded(&self) -> String {
+        self.key("rank:most_traded")
     }
 
-    // Metadata for rankings
+    /// Top sales: score = sale_price_sats, descending = highest price first
+    pub fn rank_top_sales(&self) -> String {
+        self.key("rank:top_sales")
+    }
+
+    /// Best deals: score = discount_pct, descending = best discount first
+    pub fn rank_best_deals(&self) -> String {
+        self.key("rank:best_deals")
+    }
+
+    // ===========================================
+    // Earner-based Ranking (ZSet, member=btc_address, 1 type)
+    // Metadata stored in rank:earner_meta:{btc_address}
+    // ===========================================
+
+    /// Top earners: score = total_earnings_sats, descending = highest earnings first
+    pub fn rank_top_earners(&self) -> String {
+        self.key("rank:top_earners")
+    }
+
+    // Metadata for name-based rankings (5 types: new_listings, recent_sales, most_traded, top_sales, best_deals)
     pub fn rank_meta(&self, name: &str) -> String {
         self.key(&format!("rank:meta:{}", name))
     }
 
-    // Pending confirmations queue (names waiting for confirmation threshold)
-    pub fn pending_confirmations(&self) -> String {
-        self.key("pending_confirmations")
+    // Metadata for earner-based ranking (top_earners, member is btc_address)
+    pub fn earner_meta(&self, btc_address: &str) -> String {
+        self.key(&format!("rank:earner_meta:{}", btc_address))
     }
 
-    // Pub/Sub channels
-    pub fn channel_events(&self) -> String {
-        self.key("events")
-    }
-
+    // Pub/Sub channels (6 types, corresponding to rankings)
     pub fn channel_new_listings(&self) -> String {
         self.key("channel:new_listings")
     }
@@ -100,25 +123,63 @@ impl KeyBuilder {
     pub fn user_sessions(&self, btc_address: &str) -> String {
         self.key(&format!("user_sessions:{}", btc_address))
     }
-
-    // Pending transactions (tx_ids waiting for canister events)
-    pub fn pending_txs(&self) -> String {
-        self.key("pending_txs")
-    }
-
-    // Last processed event offset (for get_events polling)
-    pub fn event_offset(&self) -> String {
-        self.key("event_offset")
-    }
 }
 
-/// Listing info stored in Redis
+/// Metadata for name-based rankings (stored in rank:meta:{name})
+/// Used by: new_listings, recent_sales, most_traded, top_sales, best_deals
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NameRankingMeta {
+    pub name: String,
+    /// Current listing price (for new_listings)
+    #[serde(default)]
+    pub list_price_sats: Option<u64>,
+    /// Last sale price (for recent_sales, top_sales, best_deals)
+    #[serde(default)]
+    pub sale_price_sats: Option<u64>,
+    /// Seller address
+    #[serde(default)]
+    pub seller_address: Option<String>,
+    /// Buyer address (for sales)
+    #[serde(default)]
+    pub buyer_address: Option<String>,
+    /// Listed timestamp (for new_listings)
+    #[serde(default)]
+    pub listed_at: Option<i64>,
+    /// Sold timestamp (for recent_sales)
+    #[serde(default)]
+    pub sold_at: Option<i64>,
+    /// Trade count (for most_traded)
+    #[serde(default)]
+    pub trade_count: Option<u32>,
+    /// Discount percentage (for best_deals, e.g., 15.5 means 15.5% off)
+    #[serde(default)]
+    pub discount_pct: Option<f64>,
+    /// Transaction ID
+    #[serde(default)]
+    pub tx_id: Option<String>,
+}
+
+/// Metadata for top earners ranking (stored in rank:earner_meta:{btc_address})
+/// Member is btc_address, score is total_earnings_sats
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EarnerMeta {
+    pub btc_address: String,
+    /// Total earnings in satoshis
+    pub total_earnings_sats: u64,
+    /// Number of sales
+    pub sale_count: u32,
+    /// Last sale timestamp
+    #[serde(default)]
+    pub last_sale_at: Option<i64>,
+}
+
+/// Legacy: Listing info for pending confirmations
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ListingMeta {
     pub name: String,
     pub price_sats: u64,
     pub seller_address: String,
-    pub listed_at: i64, // Unix timestamp
+    pub listed_at: i64,
     #[serde(default)]
     pub tx_id: Option<String>,
 }
@@ -172,17 +233,6 @@ pub trait RedisClient: Send + Sync {
     /// Get top N newest listings
     async fn get_new_listings(&self, count: usize) -> Result<Vec<ListingMeta>>;
 
-    // Pending confirmations queue operations
-
-    /// Add a listing to the pending confirmations queue
-    async fn add_pending_confirmation(&self, meta: &ListingMeta) -> Result<()>;
-
-    /// Get all pending confirmations (names waiting for threshold)
-    async fn get_pending_confirmations(&self) -> Result<Vec<ListingMeta>>;
-
-    /// Remove a listing from the pending confirmations queue
-    async fn remove_pending_confirmation(&self, name: &str) -> Result<()>;
-
     // Session operations
 
     /// Store a session with TTL
@@ -207,25 +257,6 @@ pub trait RedisClient: Send + Sync {
 
     /// Delete all sessions for a user
     async fn delete_user_sessions(&self, btc_address: &str) -> Result<u64>;
-
-    // Pending transaction tracking (for get_events polling)
-
-    /// Add a pending transaction to track
-    async fn add_pending_tx(&self, tx_id: &str, tracking_data: &str) -> Result<()>;
-
-    /// Get all pending transactions
-    async fn get_pending_txs(&self) -> Result<Vec<(String, String)>>;
-
-    /// Remove a pending transaction
-    async fn remove_pending_tx(&self, tx_id: &str) -> Result<()>;
-
-    // Event offset tracking (for get_events polling persistence)
-
-    /// Get the last processed event offset
-    async fn get_event_offset(&self) -> Result<u64>;
-
-    /// Set the last processed event offset
-    async fn set_event_offset(&self, offset: u64) -> Result<()>;
 
     /// Get a pub/sub connection for subscribing to channels
     /// Returns a stream of messages
@@ -569,7 +600,7 @@ impl RedisClient for RedisClientImpl {
     // High-level operations
 
     async fn add_new_listing(&self, meta: &ListingMeta) -> Result<()> {
-        let key = self.keys.rank_new_list();
+        let key = self.keys.rank_new_listings();
         let meta_key = self.keys.rank_meta(&meta.name);
 
         // Add to sorted set with listed_at as score (for ordering by time)
@@ -604,7 +635,7 @@ impl RedisClient for RedisClientImpl {
     }
 
     async fn get_new_listings(&self, count: usize) -> Result<Vec<ListingMeta>> {
-        let key = self.keys.rank_new_list();
+        let key = self.keys.rank_new_listings();
 
         // Get top N newest (highest scores = most recent)
         let entries = self
@@ -622,41 +653,6 @@ impl RedisClient for RedisClientImpl {
         }
 
         Ok(listings)
-    }
-
-    // Pending confirmations queue operations
-
-    async fn add_pending_confirmation(&self, meta: &ListingMeta) -> Result<()> {
-        let key = self.keys.pending_confirmations();
-        let meta_json = serde_json::to_string(meta)?;
-
-        // Use HSET with name as field, meta as value
-        self.hset(&key, &meta.name, &meta_json).await?;
-
-        tracing::info!("Added {} to pending confirmations queue", meta.name);
-        Ok(())
-    }
-
-    async fn get_pending_confirmations(&self) -> Result<Vec<ListingMeta>> {
-        let key = self.keys.pending_confirmations();
-        let entries = self.hgetall(&key).await?;
-
-        let mut listings = Vec::with_capacity(entries.len());
-        for (_name, meta_json) in entries {
-            if let Ok(meta) = serde_json::from_str::<ListingMeta>(&meta_json) {
-                listings.push(meta);
-            }
-        }
-
-        Ok(listings)
-    }
-
-    async fn remove_pending_confirmation(&self, name: &str) -> Result<()> {
-        let key = self.keys.pending_confirmations();
-        self.hdel(&key, name).await?;
-
-        tracing::info!("Removed {} from pending confirmations queue", name);
-        Ok(())
     }
 
     // Session operations
@@ -720,42 +716,6 @@ impl RedisClient for RedisClientImpl {
         }
 
         Ok(count)
-    }
-
-    // Pending transaction tracking
-
-    async fn add_pending_tx(&self, tx_id: &str, tracking_data: &str) -> Result<()> {
-        let key = self.keys.pending_txs();
-        self.hset(&key, tx_id, tracking_data).await?;
-        tracing::info!("Added tx_id {} to pending tx tracking", tx_id);
-        Ok(())
-    }
-
-    async fn get_pending_txs(&self) -> Result<Vec<(String, String)>> {
-        let key = self.keys.pending_txs();
-        self.hgetall(&key).await
-    }
-
-    async fn remove_pending_tx(&self, tx_id: &str) -> Result<()> {
-        let key = self.keys.pending_txs();
-        self.hdel(&key, tx_id).await?;
-        tracing::info!("Removed tx_id {} from pending tx tracking", tx_id);
-        Ok(())
-    }
-
-    // Event offset tracking
-
-    async fn get_event_offset(&self) -> Result<u64> {
-        let key = self.keys.event_offset();
-        match self.get(&key).await? {
-            Some(val) => Ok(val.parse().unwrap_or(0)),
-            None => Ok(0),
-        }
-    }
-
-    async fn set_event_offset(&self, offset: u64) -> Result<()> {
-        let key = self.keys.event_offset();
-        self.set(&key, &offset.to_string()).await
     }
 
     async fn get_pubsub(&self) -> Result<PubSub> {

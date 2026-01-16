@@ -10,40 +10,46 @@ use crate::domain::ListingDisplay;
 use crate::error::Result;
 use crate::infra::{DynPostgresClient, DynRedisClient};
 
-/// Ranking types
+/// Ranking types (corresponds to Pub/Sub channels)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RankingType {
-    /// 24h top earners (by total sold amount)
-    TopEarners24h,
     /// Newly listed names
-    NewList,
+    NewListings,
     /// Recently sold names
-    LastSold,
-    /// Most active in 1h (by trade count)
-    Active1h,
-    /// Most active in 24h (by trade count)
-    Active24h,
-    /// Top sell prices in 24h
-    TopSell24h,
-    /// Best discounts
-    BestDiscount,
-    /// Best bargains
-    BestBargain,
+    RecentSales,
+    /// Top earners (by total sold amount)
+    TopEarners,
+    /// Most traded (by trade count)
+    MostTraded,
+    /// Top sell prices
+    TopSales,
+    /// Best deals/bargains
+    BestDeals,
 }
 
 impl RankingType {
     /// Get the key suffix for this ranking type
     pub fn key_suffix(&self) -> &'static str {
         match self {
-            RankingType::TopEarners24h => "rank:24h_winners",
-            RankingType::NewList => "rank:new_list",
-            RankingType::LastSold => "rank:last_sold",
-            RankingType::Active1h => "rank:1h_active",
-            RankingType::Active24h => "rank:24h_active",
-            RankingType::TopSell24h => "rank:24h_top_sell",
-            RankingType::BestDiscount => "rank:best_discount",
-            RankingType::BestBargain => "rank:best_bargain",
+            RankingType::NewListings => "rank:new_listings",
+            RankingType::RecentSales => "rank:recent_sales",
+            RankingType::TopEarners => "rank:top_earners",
+            RankingType::MostTraded => "rank:most_traded",
+            RankingType::TopSales => "rank:top_sales",
+            RankingType::BestDeals => "rank:best_deals",
+        }
+    }
+
+    /// Get the corresponding channel name for this ranking type
+    pub fn channel_suffix(&self) -> &'static str {
+        match self {
+            RankingType::NewListings => "channel:new_listings",
+            RankingType::RecentSales => "channel:recent_sales",
+            RankingType::TopEarners => "channel:top_earners",
+            RankingType::MostTraded => "channel:most_traded",
+            RankingType::TopSales => "channel:top_sales",
+            RankingType::BestDeals => "channel:best_deals",
         }
     }
 }
