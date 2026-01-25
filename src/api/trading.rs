@@ -6,29 +6,18 @@
 //! - GET /v1/trading/listings - Get all listed names
 
 use axum::{
-    Json,
-    extract::{Query, Request, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
+    Extension, Json,
+    extract::{Query, State},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::domain::{
-    GetPoolRequest, ListNameRequest, ListNameResponse, ListingsResponse, UserSession,
+    BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetPoolRequest,
+    GetPoolResponse, ListRequest, ListResponse, ListingsResponse, RelistRequest, RelistResponse,
+    UserSession,
 };
-use crate::error::{AppError, Result};
+use crate::error::Result;
 use crate::state::AppState;
-
-// ============================================================================
-// Error response
-// ============================================================================
-
-/// Error response for trading endpoints
-#[derive(Debug, Serialize)]
-pub struct TradingErrorResponse {
-    pub error: String,
-    pub code: String,
-}
 
 // ============================================================================
 // Get Pool Address
@@ -44,97 +33,16 @@ pub struct TradingErrorResponse {
 ///
 /// This is the first step before listing a name. The returned pool_address
 /// is where the inscription will be transferred to.
-pub async fn get_pool(State(state): State<AppState>, request: Request) -> Response {
-    // Extract session from request extensions (set by auth middleware)
-    let session = match request.extensions().get::<UserSession>() {
-        Some(s) => s.clone(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(TradingErrorResponse {
-                    error: "Authentication required".to_string(),
-                    code: "UNAUTHORIZED".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    // Parse request body
-    let body = match axum::body::to_bytes(request.into_body(), 1024 * 16).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(TradingErrorResponse {
-                    error: "Invalid request body".to_string(),
-                    code: "BAD_REQUEST".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    let req: GetPoolRequest = match serde_json::from_slice(&body) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(TradingErrorResponse {
-                    error: format!("Invalid JSON: {}", e),
-                    code: "BAD_REQUEST".to_string(),
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    // Call trading service
-    match state
+pub async fn get_pool(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Json(req): Json<GetPoolRequest>,
+) -> Result<Json<GetPoolResponse>> {
+    let response = state
         .trading_service
         .get_pool(&req, &session.btc_address)
-        .await
-    {
-        Ok(response) => Json(response).into_response(),
-        Err(AppError::Forbidden(msg)) => (
-            StatusCode::FORBIDDEN,
-            Json(TradingErrorResponse {
-                error: msg,
-                code: "FORBIDDEN".to_string(),
-            }),
-        )
-            .into_response(),
-        Err(AppError::Canister(err)) => {
-            // Check if pool already exists (not an error)
-            if err.contains("already exists") || err.contains("Pool exists") {
-                (
-                    StatusCode::CONFLICT,
-                    Json(TradingErrorResponse {
-                        error: err,
-                        code: "POOL_ALREADY_EXISTS".to_string(),
-                    }),
-                )
-                    .into_response()
-            } else {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    Json(TradingErrorResponse {
-                        error: err,
-                        code: "CANISTER_ERROR".to_string(),
-                    }),
-                )
-                    .into_response()
-            }
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(TradingErrorResponse {
-                error: e.to_string(),
-                code: "INTERNAL_ERROR".to_string(),
-            }),
-        )
-            .into_response(),
-    }
+        .await?;
+    Ok(Json(response))
 }
 
 // ============================================================================
@@ -147,11 +55,63 @@ pub async fn get_pool(State(state): State<AppState>, request: Request) -> Respon
 ///
 /// Broadcasts the signed PSBT to the orchestrator canister and stores
 /// the listing for tracking.
-pub async fn list_name(
+pub async fn list(
     State(state): State<AppState>,
-    Json(request): Json<ListNameRequest>,
-) -> Result<Json<ListNameResponse>> {
-    let response = state.trading_service.list_name(&request).await?;
+    Extension(session): Extension<UserSession>,
+    Json(request): Json<ListRequest>,
+) -> Result<Json<ListResponse>> {
+    let response = state
+        .trading_service
+        .list(&request, &session.btc_address)
+        .await?;
+    Ok(Json(response))
+}
+
+pub async fn buy_and_relist(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Json(request): Json<BuyAndRelistRequest>,
+) -> Result<Json<ListResponse>> {
+    let response = state
+        .trading_service
+        .buy_and_relist(&request, &session.btc_address)
+        .await?;
+    Ok(Json(response))
+}
+
+pub async fn buy_and_delist(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Json(request): Json<BuyAndDelistRequest>,
+) -> Result<Json<ListResponse>> {
+    let response = state
+        .trading_service
+        .buy_and_delist(&request, &session.btc_address)
+        .await?;
+    Ok(Json(response))
+}
+
+pub async fn delist(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Json(request): Json<DelistRequest>,
+) -> Result<Json<DelistResponse>> {
+    let response = state
+        .trading_service
+        .delist(&request, &session.btc_address)
+        .await?;
+    Ok(Json(response))
+}
+
+pub async fn relist(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Json(request): Json<RelistRequest>,
+) -> Result<Json<RelistResponse>> {
+    let response = state
+        .trading_service
+        .relist(&request, &session.btc_address)
+        .await?;
     Ok(Json(response))
 }
 

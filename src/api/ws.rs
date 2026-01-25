@@ -1,6 +1,6 @@
 //! WebSocket API for real-time updates
 //!
-//! Provides real-time delta updates via Redis Pub/Sub:
+//! Provides real-time delta updates via in-memory broadcast:
 //! - Connect to /v1/ws/connect
 //! - Send: {"type": "subscribe", "channel": "new-listings"}
 //! - Receive delta updates when new listings are added
@@ -19,7 +19,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::state::AppState;
+use crate::state::{AppState, BroadcastEvent};
 
 /// Subscription message from client
 #[derive(Debug, serde::Deserialize)]
@@ -29,18 +29,18 @@ struct SubscriptionMessage {
     channel: String,
 }
 
-/// Map channel names to Redis Pub/Sub channel keys
-fn channel_to_redis_key(channel: &str, state: &AppState) -> Option<String> {
-    let keys = state.redis_client.keys();
-    match channel {
-        "new-listings" => Some(keys.channel_new_listings()),
-        "recent-sales" => Some(keys.channel_recent_sales()),
-        "top-earners" => Some(keys.channel_top_earners()),
-        "most-traded" => Some(keys.channel_most_traded()),
-        "top-sales" => Some(keys.channel_top_sales()),
-        "best-deals" => Some(keys.channel_best_deals()),
-        _ => None,
-    }
+/// Valid channel names for subscription
+pub const VALID_CHANNELS: &[&str] = &[
+    "new-listings",
+    "recent-sales",
+    "top-earners",
+    "most-traded",
+    "top-sales",
+    "best-deals",
+];
+
+fn is_valid_channel(channel: &str) -> bool {
+    VALID_CHANNELS.contains(&channel)
 }
 
 /// WebSocket handler - unified endpoint for all subscriptions
@@ -48,14 +48,14 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
-/// Handle WebSocket connection with Redis Pub/Sub
+/// Handle WebSocket connection with broadcast channel
 async fn handle_ws(socket: WebSocket, state: AppState) {
     let (sender, mut receiver) = socket.split();
     let sender = Arc::new(Mutex::new(sender));
     let subscriptions: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    // Active pub/sub tasks (one per subscribed channel)
-    let pubsub_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
+    // Active broadcast listener tasks
+    let listener_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
         Arc::new(Mutex::new(Vec::new()));
 
     // Handle incoming messages
@@ -81,10 +81,8 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 continue;
                             }
 
-                            // Get Redis channel key
-                            let Some(redis_channel) =
-                                channel_to_redis_key(&sub_msg.channel, &state)
-                            else {
+                            // Validate channel name
+                            if !is_valid_channel(&sub_msg.channel) {
                                 let ack = serde_json::json!({
                                     "type": "error",
                                     "message": format!("Unknown channel: {}", sub_msg.channel)
@@ -94,36 +92,29 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                     .send(Message::Text(ack.to_string().into()))
                                     .await;
                                 continue;
-                            };
+                            }
 
                             tracing::info!("Client subscribing to: {}", sub_msg.channel);
                             subs.insert(sub_msg.channel.clone());
                             drop(subs);
 
-                            // Start Redis Pub/Sub listener for this channel
+                            // Start broadcast listener for this channel
                             let sender_clone = sender.clone();
                             let channel_name = sub_msg.channel.clone();
-                            let state_clone = state.clone();
+                            let broadcast_rx = state.broadcast_tx.subscribe();
 
-                            let pubsub_task = tokio::spawn(async move {
-                                if let Err(e) = run_pubsub_listener(
-                                    state_clone,
-                                    redis_channel,
+                            let listener_task = tokio::spawn(async move {
+                                run_broadcast_listener(
+                                    broadcast_rx,
                                     channel_name.clone(),
                                     sender_clone,
                                 )
-                                .await
-                                {
-                                    tracing::warn!(
-                                        "Pub/Sub listener for {} ended: {:?}",
-                                        channel_name,
-                                        e
-                                    );
-                                }
+                                .await;
+                                tracing::debug!("Broadcast listener for {} ended", channel_name);
                             });
 
-                            let mut tasks = pubsub_tasks.lock().await;
-                            tasks.push(pubsub_task);
+                            let mut tasks = listener_tasks.lock().await;
+                            tasks.push(listener_task);
 
                             // Send subscription confirmation
                             let ack = serde_json::json!({
@@ -169,53 +160,132 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
         }
     }
 
-    // Clean up - abort all pub/sub listener tasks
-    let tasks = pubsub_tasks.lock().await;
+    // Clean up - abort all listener tasks
+    let tasks = listener_tasks.lock().await;
     for task in tasks.iter() {
         task.abort();
     }
 }
 
-/// Run a Redis Pub/Sub listener and forward messages to WebSocket
-async fn run_pubsub_listener(
-    state: AppState,
-    redis_channel: String,
+/// Listen to broadcast channel and forward matching events to WebSocket
+async fn run_broadcast_listener(
+    mut broadcast_rx: tokio::sync::broadcast::Receiver<BroadcastEvent>,
     ws_channel: String,
     sender: Arc<Mutex<futures_util::stream::SplitSink<WebSocket, Message>>>,
-) -> crate::error::Result<()> {
-    use futures_util::StreamExt;
-    use redis::aio::PubSub;
+) {
+    loop {
+        match broadcast_rx.recv().await {
+            Ok(event) => {
+                // Filter events based on subscribed channel
+                let ws_msg = match (&event, ws_channel.as_str()) {
+                    // NewListing event goes to new-listings channel
+                    (BroadcastEvent::NewListing(item), "new-listings") => Some(serde_json::json!({
+                        "type": "delta",
+                        "channel": "new-listings",
+                        "data": {
+                            "type": "new_listing",
+                            "data": item
+                        }
+                    })),
+                    // TopSale event goes to top-sales channel
+                    (BroadcastEvent::TopSale(item), "top-sales") => Some(serde_json::json!({
+                        "type": "delta",
+                        "channel": "top-sales",
+                        "data": {
+                            "type": "top_sale",
+                            "data": item
+                        }
+                    })),
+                    // BestDeal event goes to best-deals channel
+                    (BroadcastEvent::BestDeal(item), "best-deals") => Some(serde_json::json!({
+                        "type": "delta",
+                        "channel": "best-deals",
+                        "data": {
+                            "type": "best_deal",
+                            "data": item
+                        }
+                    })),
+                    // RecentSale event goes to recent-sales channel
+                    (BroadcastEvent::RecentSale(item), "recent-sales") => Some(serde_json::json!({
+                        "type": "delta",
+                        "channel": "recent-sales",
+                        "data": {
+                            "type": "recent_sale",
+                            "data": item
+                        }
+                    })),
+                    // MostTraded event goes to most-traded channel
+                    (BroadcastEvent::MostTraded(item), "most-traded") => Some(serde_json::json!({
+                        "type": "delta",
+                        "channel": "most-traded",
+                        "data": {
+                            "type": "most_traded",
+                            "data": item
+                        }
+                    })),
+                    // TopEarner event goes to top-earners channel
+                    (BroadcastEvent::TopEarner(item), "top-earners") => Some(serde_json::json!({
+                        "type": "delta",
+                        "channel": "top-earners",
+                        "data": {
+                            "type": "top_earner",
+                            "data": item
+                        }
+                    })),
+                    // RemoveNewListing event goes to new-listings channel
+                    (BroadcastEvent::RemoveNewListing(name), "new-listings") => {
+                        Some(serde_json::json!({
+                            "type": "delta",
+                            "channel": "new-listings",
+                            "data": {
+                                "type": "remove",
+                                "name": name
+                            }
+                        }))
+                    }
+                    // RemoveTopSale event goes to top-sales channel
+                    (BroadcastEvent::RemoveTopSale(name), "top-sales") => Some(serde_json::json!({
+                        "type": "delta",
+                        "channel": "top-sales",
+                        "data": {
+                            "type": "remove",
+                            "name": name
+                        }
+                    })),
+                    // RemoveBestDeal event goes to best-deals channel
+                    (BroadcastEvent::RemoveBestDeal(name), "best-deals") => {
+                        Some(serde_json::json!({
+                            "type": "delta",
+                            "channel": "best-deals",
+                            "data": {
+                                "type": "remove",
+                                "name": name
+                            }
+                        }))
+                    }
+                    _ => None,
+                };
 
-    let mut pubsub: PubSub = state.redis_client.get_pubsub().await?;
-
-    // Subscribe to the Redis channel
-    pubsub.subscribe(&redis_channel).await?;
-    tracing::info!("Subscribed to Redis channel: {}", redis_channel);
-
-    // Get the message stream
-    let mut stream = pubsub.on_message();
-
-    // Forward messages to WebSocket
-    while let Some(msg) = stream.next().await {
-        let payload: String = msg.get_payload().map_err(crate::error::AppError::Redis)?;
-
-        // Forward to WebSocket with channel info
-        let ws_msg = serde_json::json!({
-            "type": "delta",
-            "channel": ws_channel,
-            "data": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(serde_json::Value::String(payload))
-        });
-
-        let mut sender_guard = sender.lock().await;
-        if sender_guard
-            .send(Message::Text(ws_msg.to_string().into()))
-            .await
-            .is_err()
-        {
-            tracing::debug!("WebSocket send failed, stopping pub/sub listener");
-            break;
+                if let Some(msg) = ws_msg {
+                    let mut sender_guard = sender.lock().await;
+                    if sender_guard
+                        .send(Message::Text(msg.to_string().into()))
+                        .await
+                        .is_err()
+                    {
+                        tracing::debug!("WebSocket send failed, stopping broadcast listener");
+                        break;
+                    }
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!("Broadcast listener lagged by {} messages", n);
+                // Continue receiving, some messages were dropped
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                tracing::debug!("Broadcast channel closed");
+                break;
+            }
         }
     }
-
-    Ok(())
 }

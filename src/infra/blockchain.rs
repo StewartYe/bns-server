@@ -2,10 +2,10 @@
 //!
 //! Interacts with:
 //! - Ord indexer: BNS name resolution and output queries
-//! - Bitcoin fullnode: Reserved for future transaction operations
+//! - Bitcoin fullnode: Transaction info queries
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::error::{AppError, Result};
@@ -33,7 +33,7 @@ struct OrdBnsRuneResponse {
 }
 
 /// Result from /bns/address/{address}
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct OrdBnsAddressResult {
     pub runes: Vec<OrdBnsRuneEntry>,
 }
@@ -59,10 +59,76 @@ pub struct OrdOutputResult {
 }
 
 // ============================================================================
+// Bitcoin RPC types
+// ============================================================================
+
+/// Bitcoin RPC JSON-RPC request
+#[derive(Debug, Serialize)]
+struct RpcRequest<'a> {
+    jsonrpc: &'static str,
+    id: &'static str,
+    method: &'a str,
+    params: Vec<serde_json::Value>,
+}
+
+/// Bitcoin RPC JSON-RPC response
+#[derive(Debug, Deserialize)]
+struct RpcResponse<T> {
+    result: Option<T>,
+    error: Option<RpcError>,
+}
+
+/// Bitcoin RPC error
+#[derive(Debug, Deserialize)]
+struct RpcError {
+    code: i32,
+    message: String,
+}
+
+/// Transaction info from getrawtransaction (verbose=true)
+#[derive(Debug, Clone, Deserialize)]
+pub struct BitcoinTxInfo {
+    pub txid: String,
+    #[serde(default)]
+    pub confirmations: Option<u32>,
+    /// Virtual size in vbytes
+    #[serde(default)]
+    pub vsize: Option<u64>,
+    /// Transaction fee in BTC (only available if wallet has inputs)
+    #[serde(default)]
+    pub fee: Option<f64>,
+    pub vin: Vec<TxInput>,
+    pub vout: Vec<TxOutput>,
+}
+
+/// Transaction input
+#[derive(Debug, Clone, Deserialize)]
+pub struct TxInput {
+    pub txid: Option<String>,
+    pub vout: Option<u32>,
+    /// Previous output value (from Bitcoin Core 25.0+, needs previous tx lookup otherwise)
+    #[serde(default)]
+    pub prevout: Option<PrevOut>,
+}
+
+/// Previous output info (Bitcoin Core 25.0+)
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrevOut {
+    pub value: f64,
+}
+
+/// Transaction output
+#[derive(Debug, Clone, Deserialize)]
+pub struct TxOutput {
+    pub value: f64,
+    pub n: u32,
+}
+
+// ============================================================================
 // Blockchain client trait
 // ============================================================================
 
-/// Blockchain client abstraction for Ord backend requests
+/// Blockchain client abstraction for Ord backend and Bitcoin fullnode requests
 #[async_trait]
 pub trait BlockchainClient: Send + Sync {
     /// Get BNS rune info by name (forward resolution)
@@ -76,6 +142,14 @@ pub trait BlockchainClient: Send + Sync {
     /// Get output info including inscriptions
     /// Calls: GET /output/{outpoint}
     async fn ord_output(&self, outpoint: &str) -> Result<Option<OrdOutputResult>>;
+
+    /// Get transaction info from Bitcoin fullnode
+    /// Calls: getrawtransaction RPC
+    async fn bitcoind_tx(&self, txid: &str) -> Result<Option<BitcoinTxInfo>>;
+
+    /// Calculate transaction fee in satoshis
+    /// Returns None if fee cannot be determined
+    async fn get_tx_fee_sats(&self, txid: &str) -> Result<Option<u64>>;
 }
 
 // ============================================================================
@@ -85,7 +159,6 @@ pub trait BlockchainClient: Send + Sync {
 /// Blockchain client implementation
 pub struct BlockchainClientImpl {
     ord_url: String,
-    #[allow(dead_code)]
     bitcoin_rpc_url: String,
     client: reqwest::Client,
 }
@@ -97,6 +170,54 @@ impl BlockchainClientImpl {
             bitcoin_rpc_url: bitcoin_rpc_url.to_string(),
             client: reqwest::Client::new(),
         }
+    }
+
+    /// Make a Bitcoin RPC call
+    async fn bitcoin_rpc<T: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        params: Vec<serde_json::Value>,
+    ) -> Result<T> {
+        let request = RpcRequest {
+            jsonrpc: "1.0",
+            id: "bns-server",
+            method,
+            params,
+        };
+
+        let response = self
+            .client
+            .post(&self.bitcoin_rpc_url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Bitcoin RPC request failed: {}", e)))?;
+
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to read RPC response: {}", e)))?;
+
+        let rpc_response: RpcResponse<T> = serde_json::from_str(&response_text).map_err(|e| {
+            tracing::error!(
+                "Failed to parse RPC response for {}: {}. Response: {}",
+                method,
+                e,
+                &response_text[..response_text.len().min(500)]
+            );
+            AppError::Internal(format!("Failed to parse RPC response: {}", e))
+        })?;
+
+        if let Some(error) = rpc_response.error {
+            return Err(AppError::Internal(format!(
+                "Bitcoin RPC error {}: {}",
+                error.code, error.message
+            )));
+        }
+
+        rpc_response
+            .result
+            .ok_or_else(|| AppError::Internal("Empty RPC result".into()))
     }
 }
 
@@ -189,6 +310,99 @@ impl BlockchainClient for BlockchainClientImpl {
             .map_err(|e| AppError::Internal(format!("Failed to parse Ord response: {}", e)))?;
 
         Ok(Some(data))
+    }
+
+    async fn bitcoind_tx(&self, txid: &str) -> Result<Option<BitcoinTxInfo>> {
+        // getrawtransaction with verbose=true returns decoded transaction
+        let result: std::result::Result<BitcoinTxInfo, _> = self
+            .bitcoin_rpc(
+                "getrawtransaction",
+                vec![serde_json::json!(txid), serde_json::json!(true)],
+            )
+            .await;
+
+        match result {
+            Ok(tx_info) => Ok(Some(tx_info)),
+            Err(e) => {
+                // Check if it's a "not found" error (code -5)
+                let err_str = e.to_string();
+                if err_str.contains("-5") || err_str.contains("No such mempool or blockchain") {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    async fn get_tx_fee_sats(&self, txid: &str) -> Result<Option<u64>> {
+        let tx_info = match self.bitcoind_tx(txid).await? {
+            Some(info) => info,
+            None => return Ok(None),
+        };
+
+        // Method 1: If fee is directly available (wallet transaction)
+        if let Some(fee_btc) = tx_info.fee {
+            let fee_sats = (fee_btc.abs() * 100_000_000.0).round() as u64;
+            return Ok(Some(fee_sats));
+        }
+
+        // Method 2: Calculate from prevout (Bitcoin Core 25.0+)
+        let mut input_total: Option<u64> = Some(0);
+        for vin in &tx_info.vin {
+            if let Some(prevout) = &vin.prevout {
+                let sats = (prevout.value * 100_000_000.0).round() as u64;
+                input_total = input_total.map(|t| t + sats);
+            } else if vin.txid.is_some() {
+                // Has input but no prevout info - need to look up previous tx
+                input_total = None;
+                break;
+            }
+            // coinbase inputs (no txid) don't contribute to fee calculation
+        }
+
+        // If we couldn't get input total from prevout, try fetching previous txs
+        if input_total.is_none() {
+            let mut total = 0u64;
+            for vin in &tx_info.vin {
+                if let (Some(prev_txid), Some(vout_idx)) = (&vin.txid, vin.vout) {
+                    if let Some(prev_tx) = self.bitcoind_tx(prev_txid).await? {
+                        if let Some(vout) = prev_tx.vout.iter().find(|v| v.n == vout_idx) {
+                            total += (vout.value * 100_000_000.0).round() as u64;
+                        } else {
+                            return Ok(None); // Output not found
+                        }
+                    } else {
+                        return Ok(None); // Previous tx not found
+                    }
+                }
+                // coinbase inputs don't have txid
+            }
+            input_total = Some(total);
+        }
+
+        let output_total: u64 = tx_info
+            .vout
+            .iter()
+            .map(|v| (v.value * 100_000_000.0).round() as u64)
+            .sum();
+
+        if let Some(inputs) = input_total {
+            if inputs >= output_total {
+                Ok(Some(inputs - output_total))
+            } else {
+                // This shouldn't happen for valid transactions
+                tracing::warn!(
+                    "Transaction {} has outputs > inputs: {} > {}",
+                    txid,
+                    output_total,
+                    inputs
+                );
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 

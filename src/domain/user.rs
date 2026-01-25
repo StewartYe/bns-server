@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// User entity
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     /// Bitcoin address (primary identifier)
     pub btc_address: String,
@@ -51,26 +51,18 @@ pub struct AuthResponse {
 /// User inventory response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInventory {
-    pub btc_address: String,
+    /// User's Bitcoin address
+    pub address: String,
     /// Names currently listed for sale
-    pub listed_names: Vec<ListedNameInfo>,
+    pub listed: Vec<String>,
     /// Names owned but not listed
-    pub owned_names: Vec<OwnedNameInfo>,
+    pub unlisted: Vec<String>,
+    /// Count of listed names
+    pub listed_count: usize,
+    /// Count of unlisted names
+    pub unlisted_count: usize,
     /// Total value of all listings in satoshis
     pub total_listed_value_sats: u64,
-}
-
-/// Info about a listed name
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListedNameInfo {
-    pub name: String,
-    pub price_sats: u64,
-    pub listed_at: DateTime<Utc>,
-}
-
-/// Info about an owned (non-listed) name
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OwnedNameInfo {
-    pub name: String,
-    pub inscription_id: String,
+    /// Global rank (currently always 0)
+    pub global_rank: u64,
 }

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO name_metadata (name, owner_address, description, url, twitter, email, created_at, updated_at)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n             ON CONFLICT (name) DO UPDATE SET\n                owner_address = EXCLUDED.owner_address,\n                description = EXCLUDED.description,\n                url = EXCLUDED.url,\n                twitter = EXCLUDED.twitter,\n                email = EXCLUDED.email,\n                updated_at = EXCLUDED.updated_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Text",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f662d332d46ec3e5d50933e31e779ddc415011fed2585394286230f41366118c"
+}

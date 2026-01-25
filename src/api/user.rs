@@ -1,6 +1,7 @@
 //! User API handlers
 //!
 //! Endpoints for user-specific operations:
+//! - GET /v1/user/inventory - Get user inventory (listed and unlisted names)
 //! - PUT /v1/user/primary-name - Set primary name
 //! - DELETE /v1/user/primary-name - Clear primary name
 //! - PUT /v1/user/names/{name}/metadata - Update name metadata
@@ -8,16 +9,13 @@
 use std::collections::HashMap;
 
 use axum::{
-    Json,
-    extract::{Path, Request, State},
-    http::header,
-    response::{IntoResponse, Response},
+    Extension, Json,
+    extract::{Path, State},
 };
 use serde::Serialize;
 
-use crate::constants::SESSION_COOKIE_NAME;
-use crate::domain::{SetPrimaryNameRequest, UpdateNameMetadataRequest};
-use crate::error::AppError;
+use crate::domain::{SetPrimaryNameRequest, UpdateNameMetadataRequest, UserInventory, UserSession};
+use crate::error::Result;
 use crate::state::AppState;
 
 /// Response for primary name operations
@@ -34,27 +32,19 @@ pub struct NameMetadataResponse {
     pub metadata: HashMap<String, String>,
 }
 
-/// Helper to extract session from request (supports both cookie and Bearer token)
-fn extract_session_token(request: &Request) -> Result<&str, AppError> {
-    // Try cookie first (preferred for browser security)
-    if let Some(cookie_header) = request.headers().get(header::COOKIE) {
-        if let Ok(cookies_str) = cookie_header.to_str() {
-            for cookie in cookies_str.split(';') {
-                let cookie = cookie.trim();
-                if let Some(value) = cookie.strip_prefix(&format!("{}=", SESSION_COOKIE_NAME)) {
-                    return Ok(value);
-                }
-            }
-        }
-    }
+/// Get user inventory
+///
+/// GET /v1/user/inventory
+pub async fn get_inventory(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
+) -> Result<Json<UserInventory>> {
+    let inventory = state
+        .user_service
+        .get_inventory(&session.btc_address)
+        .await?;
 
-    // Fall back to Bearer token (for API clients)
-    request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or_else(|| AppError::Unauthorized("Missing session".into()))
+    Ok(Json(inventory))
 }
 
 /// Set primary name for authenticated user
@@ -62,24 +52,9 @@ fn extract_session_token(request: &Request) -> Result<&str, AppError> {
 /// PUT /v1/user/primary-name
 pub async fn set_primary_name(
     State(state): State<AppState>,
-    request: Request,
-) -> Result<Response, AppError> {
-    let session_id = extract_session_token(&request)?;
-
-    let session = state
-        .auth_service
-        .validate_session(session_id)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("Invalid or expired session".into()))?;
-
-    // Parse request body
-    let body = axum::body::to_bytes(request.into_body(), 1024 * 10)
-        .await
-        .map_err(|_| AppError::BadRequest("Invalid request body".into()))?;
-
-    let req: SetPrimaryNameRequest = serde_json::from_slice(&body)
-        .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
-
+    Extension(session): Extension<UserSession>,
+    Json(req): Json<SetPrimaryNameRequest>,
+) -> Result<Json<PrimaryNameResponse>> {
     // Set primary name (UserService handles ownership verification)
     state
         .user_service
@@ -89,8 +64,7 @@ pub async fn set_primary_name(
     Ok(Json(PrimaryNameResponse {
         address: session.btc_address,
         primary_name: Some(req.name),
-    })
-    .into_response())
+    }))
 }
 
 /// Clear primary name for authenticated user
@@ -98,16 +72,8 @@ pub async fn set_primary_name(
 /// DELETE /v1/user/primary-name
 pub async fn clear_primary_name(
     State(state): State<AppState>,
-    request: Request,
-) -> Result<Response, AppError> {
-    let session_id = extract_session_token(&request)?;
-
-    let session = state
-        .auth_service
-        .validate_session(session_id)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("Invalid or expired session".into()))?;
-
+    Extension(session): Extension<UserSession>,
+) -> Result<Json<PrimaryNameResponse>> {
     // Clear primary name
     state
         .user_service
@@ -117,8 +83,7 @@ pub async fn clear_primary_name(
     Ok(Json(PrimaryNameResponse {
         address: session.btc_address,
         primary_name: None,
-    })
-    .into_response())
+    }))
 }
 
 /// Update name metadata
@@ -126,25 +91,10 @@ pub async fn clear_primary_name(
 /// PUT /v1/user/names/{name}/metadata
 pub async fn update_name_metadata(
     State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
     Path(name): Path<String>,
-    request: Request,
-) -> Result<Response, AppError> {
-    let session_id = extract_session_token(&request)?;
-
-    let session = state
-        .auth_service
-        .validate_session(session_id)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized("Invalid or expired session".into()))?;
-
-    // Parse request body
-    let body = axum::body::to_bytes(request.into_body(), 1024 * 10)
-        .await
-        .map_err(|_| AppError::BadRequest("Invalid request body".into()))?;
-
-    let req: UpdateNameMetadataRequest = serde_json::from_slice(&body)
-        .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
-
+    Json(req): Json<UpdateNameMetadataRequest>,
+) -> Result<Json<NameMetadataResponse>> {
     // Update metadata (UserService handles ownership verification)
     let metadata = state
         .user_service
@@ -169,6 +119,5 @@ pub async fn update_name_metadata(
     Ok(Json(NameMetadataResponse {
         name,
         metadata: map,
-    })
-    .into_response())
+    }))
 }

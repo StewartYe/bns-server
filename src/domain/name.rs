@@ -74,7 +74,7 @@ pub struct NameSummary {
 }
 
 /// Name metadata stored in database
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct NameMetadata {
     /// The Rune name (max 64 characters)
     pub name: String,

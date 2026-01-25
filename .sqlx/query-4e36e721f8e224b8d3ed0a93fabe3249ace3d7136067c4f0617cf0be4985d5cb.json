@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET primary_name = NULL, last_seen_at = NOW() WHERE btc_address = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4e36e721f8e224b8d3ed0a93fabe3249ace3d7136067c4f0617cf0be4985d5cb"
+}

@@ -6,15 +6,17 @@
 //!
 //! Based on: https://docs.cloud.google.com/memorystore/docs/cluster/client-library-connection#go
 
+use crate::api::rankings::{
+    BestDealItem, MostTradedItem, NewListingItem, RecentSaleItem, TopEarnerItem, TopSaleItem,
+};
+use crate::config::{Network, RedisConfig};
+use crate::error::Result;
 use async_trait::async_trait;
-use redis::aio::{MultiplexedConnection, PubSub};
+use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, Client, TlsCertificates};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-
-use crate::config::{Network, RedisConfig};
-use crate::error::Result;
 
 /// Token refresh interval (5 minutes before checking, like Go example)
 const TOKEN_REFRESH_DURATION: Duration = Duration::from_secs(5 * 60);
@@ -70,6 +72,27 @@ impl KeyBuilder {
         self.key("rank:best_deals")
     }
 
+    // Metadata for name-based rankings (5 types: new_listings, recent_sales, most_traded, top_sales, best_deals)
+    pub fn rank_new_listings_meta(&self, name: &str) -> String {
+        self.key(&format!("rank:meta:new_listings:{}", name))
+    }
+
+    pub fn rank_most_traded_meta(&self, name: &str) -> String {
+        self.key(&format!("rank:meta:most_traded:{}", name))
+    }
+
+    pub fn rank_recent_sales_meta(&self, name: &str) -> String {
+        self.key(&format!("rank:meta:recent_sales:{}", name))
+    }
+
+    pub fn rank_top_sales_meta(&self, name: &str) -> String {
+        self.key(&format!("rank:meta:top_sales:{}", name))
+    }
+
+    pub fn rank_best_deals_meta(&self, name: &str) -> String {
+        self.key(&format!("rank:meta:best_deals:{}", name))
+    }
+
     // ===========================================
     // Earner-based Ranking (ZSet, member=btc_address, 1 type)
     // Metadata stored in rank:earner_meta:{btc_address}
@@ -80,39 +103,9 @@ impl KeyBuilder {
         self.key("rank:top_earners")
     }
 
-    // Metadata for name-based rankings (5 types: new_listings, recent_sales, most_traded, top_sales, best_deals)
-    pub fn rank_meta(&self, name: &str) -> String {
-        self.key(&format!("rank:meta:{}", name))
-    }
-
     // Metadata for earner-based ranking (top_earners, member is btc_address)
-    pub fn earner_meta(&self, btc_address: &str) -> String {
+    pub fn rank_top_earners_meta(&self, btc_address: &str) -> String {
         self.key(&format!("rank:earner_meta:{}", btc_address))
-    }
-
-    // Pub/Sub channels (6 types, corresponding to rankings)
-    pub fn channel_new_listings(&self) -> String {
-        self.key("channel:new_listings")
-    }
-
-    pub fn channel_recent_sales(&self) -> String {
-        self.key("channel:recent_sales")
-    }
-
-    pub fn channel_top_earners(&self) -> String {
-        self.key("channel:top_earners")
-    }
-
-    pub fn channel_most_traded(&self) -> String {
-        self.key("channel:most_traded")
-    }
-
-    pub fn channel_top_sales(&self) -> String {
-        self.key("channel:top_sales")
-    }
-
-    pub fn channel_best_deals(&self) -> String {
-        self.key("channel:best_deals")
     }
 
     // Sessions
@@ -123,65 +116,6 @@ impl KeyBuilder {
     pub fn user_sessions(&self, btc_address: &str) -> String {
         self.key(&format!("user_sessions:{}", btc_address))
     }
-}
-
-/// Metadata for name-based rankings (stored in rank:meta:{name})
-/// Used by: new_listings, recent_sales, most_traded, top_sales, best_deals
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct NameRankingMeta {
-    pub name: String,
-    /// Current listing price (for new_listings)
-    #[serde(default)]
-    pub list_price_sats: Option<u64>,
-    /// Last sale price (for recent_sales, top_sales, best_deals)
-    #[serde(default)]
-    pub sale_price_sats: Option<u64>,
-    /// Seller address
-    #[serde(default)]
-    pub seller_address: Option<String>,
-    /// Buyer address (for sales)
-    #[serde(default)]
-    pub buyer_address: Option<String>,
-    /// Listed timestamp (for new_listings)
-    #[serde(default)]
-    pub listed_at: Option<i64>,
-    /// Sold timestamp (for recent_sales)
-    #[serde(default)]
-    pub sold_at: Option<i64>,
-    /// Trade count (for most_traded)
-    #[serde(default)]
-    pub trade_count: Option<u32>,
-    /// Discount percentage (for best_deals, e.g., 15.5 means 15.5% off)
-    #[serde(default)]
-    pub discount_pct: Option<f64>,
-    /// Transaction ID
-    #[serde(default)]
-    pub tx_id: Option<String>,
-}
-
-/// Metadata for top earners ranking (stored in rank:earner_meta:{btc_address})
-/// Member is btc_address, score is total_earnings_sats
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EarnerMeta {
-    pub btc_address: String,
-    /// Total earnings in satoshis
-    pub total_earnings_sats: u64,
-    /// Number of sales
-    pub sale_count: u32,
-    /// Last sale timestamp
-    #[serde(default)]
-    pub last_sale_at: Option<i64>,
-}
-
-/// Legacy: Listing info for pending confirmations
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ListingMeta {
-    pub name: String,
-    pub price_sats: u64,
-    pub seller_address: String,
-    pub listed_at: i64,
-    #[serde(default)]
-    pub tx_id: Option<String>,
 }
 
 /// Redis client abstraction
@@ -222,16 +156,62 @@ pub trait RedisClient: Send + Sync {
     async fn incr(&self, key: &str) -> Result<i64>;
     async fn decr(&self, key: &str) -> Result<i64>;
 
-    // Pub/Sub
-    async fn publish(&self, channel: &str, message: &str) -> Result<u64>;
+    // ===========================================
+    // Listing-based rankings (new_listings, top_sales, best_deals)
+    // ===========================================
 
-    // High-level operations
+    /// Add to new-listings ranking (score = listed_at)
+    async fn add_new_listing(&self, item: &NewListingItem) -> Result<()>;
 
-    /// Add a new listing to the new_list ranking
-    async fn add_new_listing(&self, meta: &ListingMeta) -> Result<()>;
+    /// Remove from new-listings ranking
+    async fn rem_new_listing(&self, name: &str) -> Result<()>;
 
     /// Get top N newest listings
-    async fn get_new_listings(&self, count: usize) -> Result<Vec<ListingMeta>>;
+    async fn get_new_listings(&self, count: usize) -> Result<Vec<NewListingItem>>;
+
+    /// Add to top-sales ranking (score = price_sats)
+    async fn add_top_sale(&self, item: &TopSaleItem) -> Result<()>;
+
+    /// Remove from top-sales ranking
+    async fn rem_top_sale(&self, name: &str) -> Result<()>;
+
+    /// Get top N sales by price
+    async fn get_top_sales(&self, count: usize) -> Result<Vec<TopSaleItem>>;
+
+    /// Add to best-deals ranking (score = discount)
+    async fn add_best_deal(&self, item: &BestDealItem) -> Result<()>;
+
+    /// Remove from best-deals ranking
+    async fn rem_best_deal(&self, name: &str) -> Result<()>;
+
+    /// Get top N best deals by discount
+    async fn get_best_deals(&self, count: usize) -> Result<Vec<BestDealItem>>;
+
+    // ===========================================
+    // Sale-based rankings (recent_sales, most_traded)
+    // ===========================================
+
+    /// Add to recent-sales ranking (score = sold_at)
+    async fn add_recent_sale(&self, item: &RecentSaleItem) -> Result<()>;
+
+    /// Get top N recent sales
+    async fn get_recent_sales(&self, count: usize) -> Result<Vec<RecentSaleItem>>;
+
+    /// Add to most-traded ranking (score = trade_count)
+    async fn add_most_traded(&self, item: &MostTradedItem) -> Result<()>;
+
+    /// Get top N most traded names
+    async fn get_most_traded(&self, count: usize) -> Result<Vec<MostTradedItem>>;
+
+    // ===========================================
+    // Earner-based ranking (top_earners)
+    // ===========================================
+
+    /// Add to top-earners ranking (score = total_profit_sats)
+    async fn add_top_earner(&self, item: &TopEarnerItem) -> Result<()>;
+
+    /// Get top N earners by profit
+    async fn get_top_earners(&self, count: usize) -> Result<Vec<TopEarnerItem>>;
 
     // Session operations
 
@@ -257,10 +237,6 @@ pub trait RedisClient: Send + Sync {
 
     /// Delete all sessions for a user
     async fn delete_user_sessions(&self, btc_address: &str) -> Result<u64>;
-
-    /// Get a pub/sub connection for subscribing to channels
-    /// Returns a stream of messages
-    async fn get_pubsub(&self) -> Result<PubSub>;
 }
 
 /// Token cache for IAM authentication
@@ -592,28 +568,22 @@ impl RedisClient for RedisClientImpl {
         Ok(conn.decr(key, 1).await?)
     }
 
-    async fn publish(&self, channel: &str, message: &str) -> Result<u64> {
-        let mut conn = self.get_connection().await?;
-        Ok(conn.publish(channel, message).await?)
-    }
+    // ===========================================
+    // Listing-based rankings implementations
+    // ===========================================
 
-    // High-level operations
-
-    async fn add_new_listing(&self, meta: &ListingMeta) -> Result<()> {
+    async fn add_new_listing(&self, item: &NewListingItem) -> Result<()> {
         let key = self.keys.rank_new_listings();
-        let meta_key = self.keys.rank_meta(&meta.name);
+        let meta_key = self.keys.rank_new_listings_meta(&item.name);
 
-        // Add to sorted set with listed_at as score (for ordering by time)
-        self.zadd(&key, meta.listed_at as f64, &meta.name).await?;
-
-        // Store metadata as JSON
-        let meta_json = serde_json::to_string(meta)?;
+        // score = listed_at
+        self.zadd(&key, item.listed_at as f64, &item.name).await?;
+        let meta_json = serde_json::to_string(item)?;
         self.set(&meta_key, &meta_json).await?;
 
         // Trim to keep only top 20
         let count = self.zcard(&key).await?;
         if count > 20 {
-            // Remove oldest entries (lowest scores)
             let mut conn = self.get_connection().await?;
             let _: () = redis::cmd("ZREMRANGEBYRANK")
                 .arg(&key)
@@ -622,37 +592,204 @@ impl RedisClient for RedisClientImpl {
                 .query_async(&mut conn)
                 .await?;
         }
-
-        // Publish update event
-        let channel = self.keys.channel_new_listings();
-        let event = serde_json::json!({
-            "type": "new_listing",
-            "data": meta
-        });
-        self.publish(&channel, &event.to_string()).await?;
-
         Ok(())
     }
 
-    async fn get_new_listings(&self, count: usize) -> Result<Vec<ListingMeta>> {
+    async fn rem_new_listing(&self, name: &str) -> Result<()> {
         let key = self.keys.rank_new_listings();
+        self.zrem(&key, name).await?;
+        let meta_key = self.keys.rank_new_listings_meta(name);
+        self.del(&meta_key).await?;
+        Ok(())
+    }
 
-        // Get top N newest (highest scores = most recent)
+    async fn get_new_listings(&self, count: usize) -> Result<Vec<NewListingItem>> {
+        let key = self.keys.rank_new_listings();
         let entries = self
             .zrevrange_with_scores(&key, 0, (count - 1) as isize)
             .await?;
 
-        let mut listings = Vec::with_capacity(entries.len());
+        let mut items = Vec::with_capacity(entries.len());
         for (name, _score) in entries {
-            let meta_key = self.keys.rank_meta(&name);
+            let meta_key = self.keys.rank_new_listings_meta(&name);
             if let Some(meta_json) = self.get(&meta_key).await? {
-                if let Ok(meta) = serde_json::from_str::<ListingMeta>(&meta_json) {
-                    listings.push(meta);
+                if let Ok(item) = serde_json::from_str::<NewListingItem>(&meta_json) {
+                    items.push(item);
                 }
             }
         }
+        Ok(items)
+    }
 
-        Ok(listings)
+    async fn add_top_sale(&self, item: &TopSaleItem) -> Result<()> {
+        let key = self.keys.rank_top_sales();
+        let meta_key = self.keys.rank_top_sales_meta(&item.name);
+
+        // score = price_sats
+        self.zadd(&key, item.price_sats as f64, &item.name).await?;
+        let meta_json = serde_json::to_string(item)?;
+        self.set(&meta_key, &meta_json).await?;
+        Ok(())
+    }
+
+    async fn rem_top_sale(&self, name: &str) -> Result<()> {
+        let key = self.keys.rank_top_sales();
+        self.zrem(&key, name).await?;
+        let meta_key = self.keys.rank_top_sales_meta(name);
+        self.del(&meta_key).await?;
+        Ok(())
+    }
+
+    async fn get_top_sales(&self, count: usize) -> Result<Vec<TopSaleItem>> {
+        let key = self.keys.rank_top_sales();
+        let entries = self
+            .zrevrange_with_scores(&key, 0, (count - 1) as isize)
+            .await?;
+
+        let mut items = Vec::with_capacity(entries.len());
+        for (name, _score) in entries {
+            let meta_key = self.keys.rank_top_sales_meta(&name);
+            if let Some(meta_json) = self.get(&meta_key).await? {
+                if let Ok(item) = serde_json::from_str::<TopSaleItem>(&meta_json) {
+                    items.push(item);
+                }
+            }
+        }
+        Ok(items)
+    }
+
+    async fn add_best_deal(&self, item: &BestDealItem) -> Result<()> {
+        let key = self.keys.rank_best_deals();
+        let meta_key = self.keys.rank_best_deals_meta(&item.name);
+
+        // score = discount (higher is better)
+        self.zadd(&key, item.discount, &item.name).await?;
+        let meta_json = serde_json::to_string(item)?;
+        self.set(&meta_key, &meta_json).await?;
+        Ok(())
+    }
+
+    async fn rem_best_deal(&self, name: &str) -> Result<()> {
+        let key = self.keys.rank_best_deals();
+        self.zrem(&key, name).await?;
+        let meta_key = self.keys.rank_best_deals_meta(name);
+        self.del(&meta_key).await?;
+        Ok(())
+    }
+
+    async fn get_best_deals(&self, count: usize) -> Result<Vec<BestDealItem>> {
+        let key = self.keys.rank_best_deals();
+        // Higher discount score = better deal
+        let entries = self
+            .zrevrange_with_scores(&key, 0, (count - 1) as isize)
+            .await?;
+
+        let mut items = Vec::with_capacity(entries.len());
+        for (name, _score) in entries {
+            let meta_key = self.keys.rank_best_deals_meta(&name);
+            if let Some(meta_json) = self.get(&meta_key).await? {
+                if let Ok(item) = serde_json::from_str::<BestDealItem>(&meta_json) {
+                    items.push(item);
+                }
+            }
+        }
+        Ok(items)
+    }
+
+    // ===========================================
+    // Sale-based rankings implementations
+    // ===========================================
+
+    async fn add_recent_sale(&self, item: &RecentSaleItem) -> Result<()> {
+        let key = self.keys.rank_recent_sales();
+        let meta_key = self.keys.rank_recent_sales_meta(&item.name);
+
+        // score = sold_at
+        self.zadd(&key, item.sold_at as f64, &item.name).await?;
+        let meta_json = serde_json::to_string(item)?;
+        self.set(&meta_key, &meta_json).await?;
+        Ok(())
+    }
+
+    async fn get_recent_sales(&self, count: usize) -> Result<Vec<RecentSaleItem>> {
+        let key = self.keys.rank_recent_sales();
+        let entries = self
+            .zrevrange_with_scores(&key, 0, (count - 1) as isize)
+            .await?;
+
+        let mut items = Vec::with_capacity(entries.len());
+        for (name, _score) in entries {
+            let meta_key = self.keys.rank_recent_sales_meta(&name);
+            if let Some(meta_json) = self.get(&meta_key).await? {
+                if let Ok(item) = serde_json::from_str::<RecentSaleItem>(&meta_json) {
+                    items.push(item);
+                }
+            }
+        }
+        Ok(items)
+    }
+
+    async fn add_most_traded(&self, item: &MostTradedItem) -> Result<()> {
+        let key = self.keys.rank_most_traded();
+        let meta_key = self.keys.rank_most_traded_meta(&item.name);
+
+        // score = trade_count
+        self.zadd(&key, item.trade_count as f64, &item.name).await?;
+        let meta_json = serde_json::to_string(item)?;
+        self.set(&meta_key, &meta_json).await?;
+        Ok(())
+    }
+
+    async fn get_most_traded(&self, count: usize) -> Result<Vec<MostTradedItem>> {
+        let key = self.keys.rank_most_traded();
+        let entries = self
+            .zrevrange_with_scores(&key, 0, (count - 1) as isize)
+            .await?;
+
+        let mut items = Vec::with_capacity(entries.len());
+        for (name, _score) in entries {
+            let meta_key = self.keys.rank_most_traded_meta(&name);
+            if let Some(meta_json) = self.get(&meta_key).await? {
+                if let Ok(item) = serde_json::from_str::<MostTradedItem>(&meta_json) {
+                    items.push(item);
+                }
+            }
+        }
+        Ok(items)
+    }
+
+    // ===========================================
+    // Earner-based ranking implementation
+    // ===========================================
+
+    async fn add_top_earner(&self, item: &TopEarnerItem) -> Result<()> {
+        let key = self.keys.rank_top_earners();
+        let meta_key = self.keys.rank_top_earners_meta(&item.address);
+
+        // score = total_profit_sats
+        self.zadd(&key, item.total_profit_sats as f64, &item.address)
+            .await?;
+        let meta_json = serde_json::to_string(item)?;
+        self.set(&meta_key, &meta_json).await?;
+        Ok(())
+    }
+
+    async fn get_top_earners(&self, count: usize) -> Result<Vec<TopEarnerItem>> {
+        let key = self.keys.rank_top_earners();
+        let entries = self
+            .zrevrange_with_scores(&key, 0, (count - 1) as isize)
+            .await?;
+
+        let mut items = Vec::with_capacity(entries.len());
+        for (address, _score) in entries {
+            let meta_key = self.keys.rank_top_earners_meta(&address);
+            if let Some(meta_json) = self.get(&meta_key).await? {
+                if let Ok(item) = serde_json::from_str::<TopEarnerItem>(&meta_json) {
+                    items.push(item);
+                }
+            }
+        }
+        Ok(items)
     }
 
     // Session operations
@@ -714,18 +851,7 @@ impl RedisClient for RedisClientImpl {
         if count > 0 {
             tracing::info!("Deleted {} session(s) for user {}", count, btc_address);
         }
-
         Ok(count)
-    }
-
-    async fn get_pubsub(&self) -> Result<PubSub> {
-        // Note: PubSub connections in redis-rs don't support the same AUTH flow
-        // as regular connections. For Google Cloud Memorystore with IAM auth,
-        // the pub/sub functionality relies on VPC-level security.
-        // If IAM auth is required for pub/sub, consider using a different approach
-        // such as embedding credentials in the connection URL.
-        let pubsub = self.client.get_async_pubsub().await?;
-        Ok(pubsub)
     }
 }
 

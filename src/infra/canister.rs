@@ -1,7 +1,7 @@
 //! Canister client for BNS Server
 //!
 //! Interacts with ICP Canisters:
-//! - BNS Canister: create_pool, get_events, get_pool_info
+//! - BNS Canister: create_pool, get_events
 //! - Orchestrator Canister: invoke (for transactions)
 
 use candid::{Decode, Encode, Principal};
@@ -11,7 +11,7 @@ use ic_agent::identity::Secp256k1Identity;
 use crate::config::IcConfig;
 use crate::error::{AppError, Result};
 use crate::infra::bns_canister::{
-    BnsCanisterEvent, BnsResultString, GetPoolInfoArgs, PagingArgs, PoolInfo,
+    BnsCanisterEvent, Listing as BnsListing, PagingArgs, Result1 as BnsResultString,
 };
 use crate::infra::orchestrator_canister::{InvokeArgs, Result3};
 
@@ -167,30 +167,33 @@ impl IcAgent {
         Ok(events)
     }
 
-    /// Call BNS canister get_pool_info method
-    ///
-    /// Gets pool info by pool address to verify the pool belongs to the expected name.
-    pub async fn get_pool_info(&self, pool_address: &str) -> Result<PoolInfo> {
-        let args = GetPoolInfoArgs {
-            pool_address: pool_address.to_string(),
-        };
-        let encoded_args = Encode!(&args).map_err(|e| {
-            AppError::Canister(format!("Failed to encode get_pool_info args: {}", e))
-        })?;
-
+    pub async fn get_listings(&self) -> Result<Vec<BnsListing>> {
         let response = self
             .agent
-            .query(&self.bns_canister_id, "get_pool_info")
-            .with_arg(encoded_args)
+            .query(&self.bns_canister_id, "get_listings")
             .call()
             .await
-            .map_err(|e| AppError::Canister(format!("get_pool_info call failed: {}", e)))?;
+            .map_err(|e| AppError::Canister(format!("get_list call failed: {}", e)))?;
 
-        // Response type is Option<PoolInfo>
-        let result = Decode!(&response, Option<PoolInfo>).map_err(|e| {
-            AppError::Canister(format!("Failed to decode get_pool_info response: {}", e))
-        })?;
+        Decode!(&response, Vec<BnsListing>)
+            .map_err(|e| AppError::Canister(format!("Failed to decode get_list response: {}", e)))
+    }
 
-        result.ok_or_else(|| AppError::BadRequest(format!("Pool not found: {}", pool_address)))
+    pub async fn relist_name(&self, name: &str, price: u64) -> Result<()> {
+        let encoded_args = Encode!(&name.to_string(), &price)
+            .map_err(|e| AppError::Canister(format!("Failed to encode relist_name args: {}", e)))?;
+        let response = self
+            .agent
+            .update(&self.bns_canister_id, "relist_name")
+            .with_arg(encoded_args)
+            .call_and_wait()
+            .await
+            .map_err(|e| AppError::Canister(format!("relist_name call failed: {}", e)))?;
+        let result = Decode!(&response, std::result::Result<(), String>)
+            .map_err(|e| {
+                AppError::Canister(format!("Failed to decode relist_name response: {}", e))
+            })?
+            .map_err(|e| AppError::Canister(e))?;
+        Ok(result)
     }
 }

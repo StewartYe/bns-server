@@ -11,23 +11,27 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- Listings table
+-- Status values: listed, bought_and_relisted, bought_and_delisted, relisted, delisted
 CREATE TABLE IF NOT EXISTS listings (
     id VARCHAR(36) PRIMARY KEY,
-    name VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(64) NOT NULL,
     seller_address VARCHAR(100) NOT NULL,
-    pool_address VARCHAR(100) NOT NULL,
     price_sats BIGINT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    status VARCHAR(20) NOT NULL DEFAULT 'listed',
     listed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     previous_price_sats BIGINT,
-    tx_id VARCHAR(64)
+    tx_id VARCHAR(64),
+    buyer_address VARCHAR(100),
+    new_price_sats BIGINT,
+    CONSTRAINT listings_name_status_key UNIQUE (name, status)
 );
 
 CREATE INDEX IF NOT EXISTS idx_listings_seller ON listings(seller_address);
 CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status);
 CREATE INDEX IF NOT EXISTS idx_listings_name ON listings(name);
 CREATE INDEX IF NOT EXISTS idx_listings_tx_id ON listings(tx_id);
+CREATE INDEX IF NOT EXISTS idx_listings_buyer ON listings(buyer_address);
 
 -- Name metadata table
 CREATE TABLE IF NOT EXISTS name_metadata (
@@ -52,10 +56,20 @@ CREATE TABLE IF NOT EXISTS system_state (
 );
 
 -- Pending transactions table (tracking tx_ids waiting for canister events)
+-- status: submitted (initial), pending, finalized, confirmed, rejected
+-- action: list, buy_and_relist, buy_and_delist, delist
 CREATE TABLE IF NOT EXISTS pending_txs (
     tx_id VARCHAR(100) PRIMARY KEY,
-    tracking_data JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    name VARCHAR(64) NOT NULL,
+    action VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'submitted',
+    previous_price_sats BIGINT,
+    price_sats BIGINT,
+    seller_address VARCHAR(100),
+    buyer_address VARCHAR(100)
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_txs_created ON pending_txs(created_at);
+CREATE INDEX IF NOT EXISTS idx_pending_txs_status ON pending_txs(status);
+CREATE INDEX IF NOT EXISTS idx_pending_txs_name ON pending_txs(name);

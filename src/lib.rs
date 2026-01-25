@@ -28,6 +28,7 @@ pub mod error;
 pub mod infra;
 pub mod service;
 pub mod state;
+pub mod utils;
 
 pub use config::Config;
 pub use error::{AppError, Result};

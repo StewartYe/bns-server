@@ -2,6 +2,7 @@
 //!
 //! Loaded from environment variables.
 
+use lazy_static::lazy_static;
 use std::env;
 
 /// Network type (testnet or mainnet)
@@ -80,7 +81,7 @@ pub struct Config {
     pub bitcoind_url: String,
 
     /// Ord indexer URL (required for resolve_rune/resolve_address)
-    pub ord_url: Option<String>,
+    pub ord_url: String,
 
     /// Redis/Valkey configuration
     pub redis: RedisConfig,
@@ -149,7 +150,7 @@ impl Config {
 
             ord_url: env::var("ORD_URL")
                 .or_else(|_| env::var("ORD_BACKEND_URL"))
-                .ok(),
+                .map_err(|_| ConfigError::Missing("ORD_URL"))?,
 
             redis,
 
@@ -160,6 +161,13 @@ impl Config {
                 .parse()
                 .unwrap_or(86400),
         })
+    }
+
+    pub fn bitcoin_network(&self) -> bitcoin::Network {
+        match self.network {
+            Network::Mainnet => bitcoin::Network::Bitcoin,
+            Network::Testnet => bitcoin::Network::Testnet4,
+        }
     }
 }
 
@@ -180,3 +188,7 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
+
+lazy_static! {
+    pub static ref CONFIG: Config = Config::from_env().unwrap();
+}

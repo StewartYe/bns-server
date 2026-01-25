@@ -43,6 +43,9 @@ pub enum AppError {
 
     #[error("Blockchain error: {0}")]
     Blockchain(String),
+
+    #[error("Pool already exists for name: {0}")]
+    PoolAlreadyExists(String),
 }
 
 #[derive(Serialize)]
@@ -67,6 +70,7 @@ impl IntoResponse for AppError {
             AppError::Canister(_) => (StatusCode::BAD_GATEWAY, "CANISTER_ERROR"),
             AppError::Blockchain(_) => (StatusCode::BAD_GATEWAY, "BLOCKCHAIN_ERROR"),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
+            AppError::PoolAlreadyExists(_) => (StatusCode::CONFLICT, "POOL_ALREADY_EXISTS"),
         };
 
         let body = Json(ErrorResponse {

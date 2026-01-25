@@ -15,8 +15,13 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
 - [Trading](#trading)
   - [Get/Create Pool](#getcreate-pool)
   - [Create Listing](#create-listing)
+  - [Buy and Relist](#buy-and-relist)
+  - [Buy and Delist](#buy-and-delist)
+  - [Relist](#relist)
+  - [Delist](#delist)
   - [Get All Listings](#get-all-listings)
 - [User Settings](#user-settings)
+  - [Get Inventory](#get-inventory)
   - [Set Primary Name](#set-primary-name)
   - [Clear Primary Name](#clear-primary-name)
   - [Update Name Metadata](#update-name-metadata)
@@ -388,6 +393,8 @@ List a rune name for sale via the IC orchestrator canister invoke flow.
 
 **Endpoint:** `POST /v1/trading/list`
 
+**Authentication:** Required (Bearer token or session cookie)
+
 **Request Body:**
 
 | Field | Type | Description |
@@ -397,7 +404,7 @@ List a rune name for sale via the IC orchestrator canister invoke flow.
 | `intentionSet.initiatorAddress` | string | Initiator's Bitcoin address |
 | `intentionSet.intentions` | array | Array of intentions (see below) |
 | `psbtHex` | string | PSBT hex string (unsigned, will be signed by canister) |
-| `initiatorUtxoProof` | string | Base64 encoded UTXO proof blob from frontend |
+| `initiatorUtxoProof` | array | Byte array of UTXO proof blob from frontend |
 
 **Intention Object:**
 
@@ -462,6 +469,185 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trad
 
 > **Note:** The transaction is submitted to the IC orchestrator canister for processing. Listing status updates are tracked via canister events.
 
+### Buy and Relist
+
+Buy a listed name and immediately relist it at a new price.
+
+**Endpoint:** `POST /v1/trading/buy-and-relist`
+
+**Authentication:** Required (Bearer token or session cookie)
+
+**Request Body:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `intentionSet` | object | The intention set containing buy-and-relist intentions |
+| `psbtHex` | string | PSBT hex string |
+| `initiatorUtxoProof` | array | Byte array of UTXO proof blob |
+
+**Action Parameters (JSON string in `actionParams`):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name to buy |
+| `payment_sats` | number | Payment amount in satoshis |
+| `buyer_address` | string | Buyer's Bitcoin address |
+| `buyer_token_address` | string? | Optional token receiving address |
+| `new_price` | number | New listing price in satoshis |
+
+**Example:**
+
+```bash
+curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/buy-and-relist \
+  -H "Content-Type: application/json" \
+  -d '{
+    "intentionSet": {
+      "txFeeInSats": 1000,
+      "initiatorAddress": "tb1q...",
+      "intentions": [{
+        "action": "BuyAndRelist",
+        "exchangeId": "BNS_Canister",
+        "poolAddress": "bc1q...",
+        "nonce": 1,
+        "actionParams": "{\"name\":\"MY•RUNE•NAME\",\"payment_sats\":100000,\"buyer_address\":\"tb1q...\",\"new_price\":150000}",
+        "inputCoins": [],
+        "outputCoins": [],
+        "poolUtxoSpent": [],
+        "poolUtxoReceived": []
+      }]
+    },
+    "psbtHex": "70736274ff...",
+    "initiatorUtxoProof": [...]
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "txId": "a1b2c3d4e5f6...",
+  "name": "MY•RUNE•NAME",
+  "priceSats": 150000,
+  "sellerAddress": "tb1q..."
+}
+```
+
+### Buy and Delist
+
+Buy a listed name and withdraw it to your wallet (not relisting).
+
+**Endpoint:** `POST /v1/trading/buy-and-delist`
+
+**Authentication:** Required (Bearer token or session cookie)
+
+**Request Body:**
+
+Same structure as [Buy and Relist](#buy-and-relist).
+
+**Action Parameters (JSON string in `actionParams`):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name to buy |
+| `payment_sats` | number | Payment amount in satoshis |
+| `buyer_address` | string | Buyer's Bitcoin address |
+| `buyer_token_address` | string? | Optional token receiving address |
+| `new_price` | number | Price paid (for validation) |
+
+**Response:**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "txId": "a1b2c3d4e5f6...",
+  "name": "MY•RUNE•NAME",
+  "priceSats": 100000,
+  "sellerAddress": "tb1q..."
+}
+```
+
+### Relist
+
+Change the price of your existing listing. Requires authentication.
+
+**Endpoint:** `POST /v1/trading/relist`
+
+**Authentication:** Required (Bearer token or session cookie)
+
+**Request Body:**
+
+```json
+{
+  "name": "MY•RUNE•NAME",
+  "new_price": 150000
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name to relist |
+| `new_price` | number | New price in satoshis (minimum: 100) |
+
+**Example:**
+
+```bash
+curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/relist \
+  -H "Authorization: Bearer {session_id}" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "MY•RUNE•NAME", "new_price": 150000}'
+```
+
+**Response:**
+
+```json
+{
+  "name": "MY•RUNE•NAME",
+  "newPrice": 150000
+}
+```
+
+**Errors:**
+
+| Status | Description |
+|--------|-------------|
+| `400` | Invalid price (below minimum 100 sats) |
+| `400` | Listing not found or not active |
+| `401` | Not authenticated |
+| `403` | Listing does not belong to the authenticated address |
+
+### Delist
+
+Remove your listing from the marketplace.
+
+**Endpoint:** `POST /v1/trading/delist`
+
+**Authentication:** Required (Bearer token or session cookie)
+
+**Request Body:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `intentionSet` | object | The intention set containing delist intention |
+| `psbtHex` | string | PSBT hex string |
+| `initiatorUtxoProof` | array | Byte array of UTXO proof blob |
+
+**Action Parameters (JSON string in `actionParams`):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name to delist |
+
+**Response:**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "txId": "a1b2c3d4e5f6...",
+  "name": "MY•RUNE•NAME"
+}
+```
+
 ### Get All Listings
 
 Retrieve all listings with pagination.
@@ -490,9 +676,8 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/lis
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "name": "MY•RUNE•NAME",
       "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-      "poolAddress": "bc1q...",
       "priceSats": 100000,
-      "status": "pending",
+      "status": "listed",
       "listedAt": "2025-12-25T15:24:54.805664Z",
       "txId": "a1b2c3d4e5f6..."
     }
@@ -505,15 +690,77 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/lis
 
 | Status | Description |
 |--------|-------------|
-| `pending` | Transaction broadcast, waiting for confirmations |
-| `active` | Listed and available for purchase |
-| `sold` | Has been purchased |
-| `delisted` | Removed by owner |
-| `cancelled` | Cancelled due to error |
+| `listed` | Currently listed and available for purchase |
+| `bought_and_relisted` | Was bought and immediately re-listed (historical) |
+| `bought_and_delisted` | Was bought and taken off market (historical) |
+| `relisted` | Price was changed by seller (historical) |
+| `delisted` | Was removed from sale by owner (historical) |
 
 ---
 
 ## User Settings
+
+### Get Inventory
+
+Get the authenticated user's inventory of names, including listed and unlisted names.
+
+**Endpoint:** `GET /v1/user/inventory`
+
+**Authentication:** Required (Bearer token or session cookie)
+
+**Headers:**
+```
+Authorization: Bearer {session_id}
+```
+
+**Example:**
+
+```bash
+curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/inventory \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
+```
+
+**Response:**
+
+```json
+{
+  "address": "tb1pfc30e2ucax2jzyxcy2xajkm6aw9gawdqaw2a96mrmqzcshn2qswskcluc6",
+  "listed": ["HOPE•YOU•GET•RICH", "RUNESE"],
+  "unlisted": ["JACK•TING", "PXHMBZ"],
+  "listed_count": 2,
+  "unlisted_count": 2,
+  "total_listed_value_sats": 600000,
+  "global_rank": 0
+}
+```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `address` | string | User's Bitcoin address |
+| `listed` | string[] | Names currently listed for sale |
+| `unlisted` | string[] | Names owned but not listed |
+| `listed_count` | number | Count of listed names |
+| `unlisted_count` | number | Count of unlisted names |
+| `total_listed_value_sats` | number | Total value of all listings in satoshis |
+| `global_rank` | number | User's global rank (currently always 0) |
+
+**Notes:**
+- `listed` names are retrieved from active listings in the database
+- `unlisted` includes:
+  - Names owned on-chain but not listed
+  - Names with pending delist transactions (being returned to user)
+  - Names with pending buy_and_delist transactions (user is acquiring)
+
+**Errors:**
+
+| Status | Description |
+|--------|-------------|
+| `401` | Not authenticated |
+| `500` | Internal server error |
+
+---
 
 ### Set Primary Name
 
@@ -668,11 +915,11 @@ Get the initial snapshot of a ranking.
 | Type | Description | Status |
 |------|-------------|--------|
 | `new-listings` | Newest 20 listings sorted by listing time | Implemented |
-| `recent-sales` | Recent sales sorted by sale time | Placeholder |
-| `top-earners` | Addresses ranked by cumulative profit | Placeholder |
-| `most-traded` | Names ranked by number of transactions | Placeholder |
-| `top-sales` | Names ranked by highest sale price | Placeholder |
-| `best-deals` | Current listings with highest discount percentage | Placeholder |
+| `recent-sales` | Recent sales sorted by sale time | Implemented |
+| `top-earners` | Addresses ranked by cumulative profit | Implemented |
+| `most-traded` | Names ranked by number of transactions | Implemented |
+| `top-sales` | Names ranked by highest sale price | Implemented |
+| `best-deals` | Current listings with highest discount percentage | Implemented |
 
 **Example:**
 
@@ -689,9 +936,9 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/rankings/new
     {
       "name": "MY•RUNE•NAME",
       "priceSats": 100000,
-      "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
       "listedAt": 1735344000,
-      "txId": "a1b2c3d4e5f6..."
+      "discount": 0.79,
+      "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2"
     }
   ],
   "total": 1
@@ -714,9 +961,29 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/rankings/new
 |-------|------|-------------|
 | `name` | string | The rune name |
 | `priceSats` | number | Price in satoshis |
-| `sellerAddress` | string | Seller's Bitcoin address |
 | `listedAt` | number | Unix timestamp when listed |
-| `txId` | string? | Bitcoin transaction ID (optional) |
+| `discount` | number | Discount ratio (price / previous_price * 1.26) |
+| `sellerAddress` | string | Seller's Bitcoin address |
+
+**top-sales:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `priceSats` | number | Price in satoshis |
+| `listedAt` | number | Unix timestamp when listed |
+| `discount` | number | Discount ratio |
+| `sellerAddress` | string | Seller's Bitcoin address |
+
+**best-deals:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `priceSats` | number | Price in satoshis |
+| `listedAt` | number | Unix timestamp when listed |
+| `discount` | number | Discount ratio (lower is better deal) |
+| `sellerAddress` | string | Seller's Bitcoin address |
 
 **recent-sales:**
 
@@ -727,7 +994,17 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/rankings/new
 | `sellerAddress` | string | Seller's Bitcoin address |
 | `buyerAddress` | string | Buyer's Bitcoin address |
 | `soldAt` | number | Unix timestamp when sold |
-| `txId` | string? | Bitcoin transaction ID (optional) |
+
+**most-traded:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The rune name |
+| `priceSats` | number | Last sale price in satoshis |
+| `sellerAddress` | string | Seller's Bitcoin address |
+| `buyerAddress` | string | Buyer's Bitcoin address |
+| `tradeCount` | number | Number of transactions |
+| `soldAt` | number | Unix timestamp of last trade |
 
 **top-earners:**
 
@@ -737,53 +1014,12 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/rankings/new
 | `totalProfitSats` | number | Total profit in satoshis |
 | `tradeCount` | number | Number of trades |
 
-**most-traded:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | The rune name |
-| `tradeCount` | number | Number of transactions |
-| `lastPriceSats` | number | Last sale price in satoshis |
-| `lastTradedAt` | number | Unix timestamp of last trade |
-
-**top-sales:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | The rune name |
-| `priceSats` | number | Sale price in satoshis |
-| `sellerAddress` | string | Seller's Bitcoin address |
-| `buyerAddress` | string | Buyer's Bitcoin address |
-| `soldAt` | number | Unix timestamp when sold |
-
-**best-deals:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | The rune name |
-| `currentPriceSats` | number | Current listing price in satoshis |
-| `previousPriceSats` | number | Previous price in satoshis |
-| `discountPercent` | number | Discount percentage |
-| `sellerAddress` | string | Seller's Bitcoin address |
-| `listedAt` | number | Unix timestamp when listed |
-
 **Error Response:**
 
 ```json
 {
   "error": "Unknown ranking type: invalid-type",
   "supported": ["new-listings", "recent-sales", "top-earners", "most-traded", "top-sales", "best-deals"]
-}
-```
-
-**Placeholder Response (for unimplemented rankings):**
-
-```json
-{
-  "rankingType": "recent-sales",
-  "items": [],
-  "total": 0,
-  "message": "This ranking is not yet implemented"
 }
 ```
 
@@ -827,11 +1063,11 @@ Clients must explicitly subscribe to channels to receive updates.
 | Channel | Description | Status |
 |---------|-------------|--------|
 | `new-listings` | Delta updates when new listings are added | Implemented |
-| `recent-sales` | Delta updates when sales occur | Placeholder |
-| `top-earners` | Delta updates for top earner rankings | Placeholder |
-| `most-traded` | Delta updates for most traded names | Placeholder |
-| `top-sales` | Delta updates for highest sales | Placeholder |
-| `best-deals` | Delta updates for best deal listings | Placeholder |
+| `recent-sales` | Delta updates when sales occur | Implemented |
+| `top-earners` | Delta updates for top earner rankings | Implemented |
+| `most-traded` | Delta updates for most traded names | Implemented |
+| `top-sales` | Delta updates for highest sales | Implemented |
+| `best-deals` | Delta updates for best deal listings | Implemented |
 
 ### Message Types
 
@@ -847,7 +1083,7 @@ Clients must explicitly subscribe to channels to receive updates.
 {"type": "unsubscribed", "channel": "new-listings"}
 ```
 
-**Delta Update:**
+**Delta Update (new-listings):**
 
 ```json
 {
@@ -857,10 +1093,149 @@ Clients must explicitly subscribe to channels to receive updates.
     "type": "new_listing",
     "data": {
       "name": "MY•RUNE•NAME",
-      "price_sats": 100000,
-      "seller_address": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
-      "listed_at": 1735344000,
-      "tx_id": "a1b2c3d4e5f6..."
+      "priceSats": 100000,
+      "listedAt": 1735344000,
+      "discount": 0.79,
+      "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2"
+    }
+  }
+}
+```
+
+**Delta Update (top-sales):**
+
+```json
+{
+  "type": "delta",
+  "channel": "top-sales",
+  "data": {
+    "type": "top_sale",
+    "data": {
+      "name": "MY•RUNE•NAME",
+      "priceSats": 500000,
+      "listedAt": 1735344000,
+      "discount": 0.79,
+      "sellerAddress": "tb1q..."
+    }
+  }
+}
+```
+
+**Delta Update (best-deals):**
+
+```json
+{
+  "type": "delta",
+  "channel": "best-deals",
+  "data": {
+    "type": "best_deal",
+    "data": {
+      "name": "MY•RUNE•NAME",
+      "priceSats": 80000,
+      "listedAt": 1735344000,
+      "discount": 0.63,
+      "sellerAddress": "tb1q..."
+    }
+  }
+}
+```
+
+**Removal Delta Update (new-listings):**
+
+Sent when a listing is removed (sold or delisted).
+
+```json
+{
+  "type": "delta",
+  "channel": "new-listings",
+  "data": {
+    "type": "remove",
+    "name": "MY•RUNE•NAME"
+  }
+}
+```
+
+**Removal Delta Update (top-sales):**
+
+Sent when a listing is removed from the top-sales ranking.
+
+```json
+{
+  "type": "delta",
+  "channel": "top-sales",
+  "data": {
+    "type": "remove",
+    "name": "MY•RUNE•NAME"
+  }
+}
+```
+
+**Removal Delta Update (best-deals):**
+
+Sent when a listing is removed from the best-deals ranking.
+
+```json
+{
+  "type": "delta",
+  "channel": "best-deals",
+  "data": {
+    "type": "remove",
+    "name": "MY•RUNE•NAME"
+  }
+}
+```
+
+**Delta Update (recent-sales):**
+
+```json
+{
+  "type": "delta",
+  "channel": "recent-sales",
+  "data": {
+    "type": "recent_sale",
+    "data": {
+      "name": "MY•RUNE•NAME",
+      "priceSats": 100000,
+      "sellerAddress": "tb1q...",
+      "buyerAddress": "tb1q...",
+      "soldAt": 1735344000
+    }
+  }
+}
+```
+
+**Delta Update (most-traded):**
+
+```json
+{
+  "type": "delta",
+  "channel": "most-traded",
+  "data": {
+    "type": "most_traded",
+    "data": {
+      "name": "MY•RUNE•NAME",
+      "priceSats": 100000,
+      "sellerAddress": "tb1q...",
+      "buyerAddress": "tb1q...",
+      "tradeCount": 5,
+      "soldAt": 1735344000
+    }
+  }
+}
+```
+
+**Delta Update (top-earners):**
+
+```json
+{
+  "type": "delta",
+  "channel": "top-earners",
+  "data": {
+    "type": "top_earner",
+    "data": {
+      "address": "tb1q...",
+      "totalProfitSats": 500000,
+      "tradeCount": 10
     }
   }
 }

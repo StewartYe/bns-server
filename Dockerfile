@@ -3,6 +3,7 @@ FROM rust:1.92-slim AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
+COPY .sqlx ./.sqlx
 COPY migrations ./migrations
 
 RUN cargo build --release

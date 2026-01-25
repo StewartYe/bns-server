@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE listings SET status = 'bought_and_relisted', buyer_address = $1, new_price_sats = $2, updated_at = NOW() WHERE id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09163b4d7c4e0e75f111867f9ae81d4671aca576ea84fe9581eeb2d7cf10b939"
+}

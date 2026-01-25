@@ -11,6 +11,7 @@ mod auth;
 mod event;
 mod name;
 mod trading;
+mod trading_validators;
 mod user;
 
 pub use auth::*;
