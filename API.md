@@ -1027,16 +1027,18 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/rankings/new
 
 ## WebSocket
 
-Real-time delta updates for rankings via Redis Pub/Sub.
+Real-time delta updates for rankings via in-memory broadcast.
 
 ### Architecture
 
 The WebSocket system uses a **snapshot + delta** pattern:
 
 1. **Initial Snapshot**: Use `GET /v1/rankings/{type}` to get the full initial data (max 20 items)
-2. **Delta Updates**: Subscribe to WebSocket channel to receive real-time updates when new items are added
+2. **Delta Updates**: Subscribe to WebSocket channel to receive real-time updates
 
-When receiving a delta update, clients should prepend the new item to their local list and trim to 20 items.
+When receiving a delta update:
+- `op: "upsert"`: Add or update the item identified by `key`, then re-sort and trim to 20 items
+- `op: "remove"`: Remove the item identified by `key` from the local list
 
 ### Connection
 
@@ -1060,14 +1062,27 @@ Clients must explicitly subscribe to channels to receive updates.
 
 ### Channels
 
-| Channel | Description | Status |
-|---------|-------------|--------|
-| `new-listings` | Delta updates when new listings are added | Implemented |
-| `recent-sales` | Delta updates when sales occur | Implemented |
-| `top-earners` | Delta updates for top earner rankings | Implemented |
-| `most-traded` | Delta updates for most traded names | Implemented |
-| `top-sales` | Delta updates for highest sales | Implemented |
-| `best-deals` | Delta updates for best deal listings | Implemented |
+| Channel | Description | Key Field |
+|---------|-------------|-----------|
+| `new-listings` | Delta updates when new listings are added | `name` |
+| `recent-sales` | Delta updates when sales occur | `name` |
+| `top-earners` | Delta updates for top earner rankings | `address` |
+| `most-traded` | Delta updates for most traded names | `name` |
+| `top-sales` | Delta updates for highest sales | `name` |
+| `best-deals` | Delta updates for best deal listings | `name` |
+
+### Message Format
+
+All delta messages use a flattened structure with unified operation semantics:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Always `"delta"` |
+| `channel` | string | Channel name |
+| `ts` | number | Unix timestamp in milliseconds |
+| `op` | string | Operation: `"upsert"` or `"remove"` |
+| `key` | string | Unique identifier (name or address) |
+| `data` | object | Item data (only present for `upsert`) |
 
 ### Message Types
 
@@ -1083,64 +1098,26 @@ Clients must explicitly subscribe to channels to receive updates.
 {"type": "unsubscribed", "channel": "new-listings"}
 ```
 
-**Delta Update (new-listings):**
+**Delta Upsert (new-listings):**
 
 ```json
 {
   "type": "delta",
   "channel": "new-listings",
+  "ts": 1735344000123,
+  "op": "upsert",
+  "key": "MY•RUNE•NAME",
   "data": {
-    "type": "new_listing",
-    "data": {
-      "name": "MY•RUNE•NAME",
-      "priceSats": 100000,
-      "listedAt": 1735344000,
-      "discount": 0.79,
-      "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2"
-    }
+    "name": "MY•RUNE•NAME",
+    "priceSats": 100000,
+    "listedAt": 1735344000,
+    "discount": 0.79,
+    "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2"
   }
 }
 ```
 
-**Delta Update (top-sales):**
-
-```json
-{
-  "type": "delta",
-  "channel": "top-sales",
-  "data": {
-    "type": "top_sale",
-    "data": {
-      "name": "MY•RUNE•NAME",
-      "priceSats": 500000,
-      "listedAt": 1735344000,
-      "discount": 0.79,
-      "sellerAddress": "tb1q..."
-    }
-  }
-}
-```
-
-**Delta Update (best-deals):**
-
-```json
-{
-  "type": "delta",
-  "channel": "best-deals",
-  "data": {
-    "type": "best_deal",
-    "data": {
-      "name": "MY•RUNE•NAME",
-      "priceSats": 80000,
-      "listedAt": 1735344000,
-      "discount": 0.63,
-      "sellerAddress": "tb1q..."
-    }
-  }
-}
-```
-
-**Removal Delta Update (new-listings):**
+**Delta Remove (new-listings):**
 
 Sent when a listing is removed (sold or delisted).
 
@@ -1148,95 +1125,126 @@ Sent when a listing is removed (sold or delisted).
 {
   "type": "delta",
   "channel": "new-listings",
-  "data": {
-    "type": "remove",
-    "name": "MY•RUNE•NAME"
-  }
+  "ts": 1735344000123,
+  "op": "remove",
+  "key": "MY•RUNE•NAME"
 }
 ```
 
-**Removal Delta Update (top-sales):**
-
-Sent when a listing is removed from the top-sales ranking.
+**Delta Upsert (top-sales):**
 
 ```json
 {
   "type": "delta",
   "channel": "top-sales",
+  "ts": 1735344000123,
+  "op": "upsert",
+  "key": "MY•RUNE•NAME",
   "data": {
-    "type": "remove",
-    "name": "MY•RUNE•NAME"
+    "name": "MY•RUNE•NAME",
+    "priceSats": 500000,
+    "listedAt": 1735344000,
+    "discount": 0.79,
+    "sellerAddress": "tb1q..."
   }
 }
 ```
 
-**Removal Delta Update (best-deals):**
+**Delta Remove (top-sales):**
 
-Sent when a listing is removed from the best-deals ranking.
+```json
+{
+  "type": "delta",
+  "channel": "top-sales",
+  "ts": 1735344000123,
+  "op": "remove",
+  "key": "MY•RUNE•NAME"
+}
+```
+
+**Delta Upsert (best-deals):**
 
 ```json
 {
   "type": "delta",
   "channel": "best-deals",
+  "ts": 1735344000123,
+  "op": "upsert",
+  "key": "MY•RUNE•NAME",
   "data": {
-    "type": "remove",
-    "name": "MY•RUNE•NAME"
+    "name": "MY•RUNE•NAME",
+    "priceSats": 80000,
+    "listedAt": 1735344000,
+    "discount": 0.63,
+    "sellerAddress": "tb1q..."
   }
 }
 ```
 
-**Delta Update (recent-sales):**
+**Delta Remove (best-deals):**
+
+```json
+{
+  "type": "delta",
+  "channel": "best-deals",
+  "ts": 1735344000123,
+  "op": "remove",
+  "key": "MY•RUNE•NAME"
+}
+```
+
+**Delta Upsert (recent-sales):**
 
 ```json
 {
   "type": "delta",
   "channel": "recent-sales",
+  "ts": 1735344000123,
+  "op": "upsert",
+  "key": "MY•RUNE•NAME",
   "data": {
-    "type": "recent_sale",
-    "data": {
-      "name": "MY•RUNE•NAME",
-      "priceSats": 100000,
-      "sellerAddress": "tb1q...",
-      "buyerAddress": "tb1q...",
-      "soldAt": 1735344000
-    }
+    "name": "MY•RUNE•NAME",
+    "priceSats": 100000,
+    "sellerAddress": "tb1q...",
+    "buyerAddress": "tb1q...",
+    "soldAt": 1735344000
   }
 }
 ```
 
-**Delta Update (most-traded):**
+**Delta Upsert (most-traded):**
 
 ```json
 {
   "type": "delta",
   "channel": "most-traded",
+  "ts": 1735344000123,
+  "op": "upsert",
+  "key": "MY•RUNE•NAME",
   "data": {
-    "type": "most_traded",
-    "data": {
-      "name": "MY•RUNE•NAME",
-      "priceSats": 100000,
-      "sellerAddress": "tb1q...",
-      "buyerAddress": "tb1q...",
-      "tradeCount": 5,
-      "soldAt": 1735344000
-    }
+    "name": "MY•RUNE•NAME",
+    "priceSats": 100000,
+    "sellerAddress": "tb1q...",
+    "buyerAddress": "tb1q...",
+    "tradeCount": 5,
+    "soldAt": 1735344000
   }
 }
 ```
 
-**Delta Update (top-earners):**
+**Delta Upsert (top-earners):**
 
 ```json
 {
   "type": "delta",
   "channel": "top-earners",
+  "ts": 1735344000123,
+  "op": "upsert",
+  "key": "tb1q...",
   "data": {
-    "type": "top_earner",
-    "data": {
-      "address": "tb1q...",
-      "totalProfitSats": 500000,
-      "tradeCount": 10
-    }
+    "address": "tb1q...",
+    "totalProfitSats": 500000,
+    "tradeCount": 10
   }
 }
 ```

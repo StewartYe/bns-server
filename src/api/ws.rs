@@ -5,6 +5,12 @@
 //! - Send: {"type": "subscribe", "channel": "new-listings"}
 //! - Receive delta updates when new listings are added
 //!
+//! Delta message format (flattened):
+//! - op: "upsert" | "remove"
+//! - key: identifier (name for most channels, address for top-earners)
+//! - ts: unix timestamp in milliseconds
+//! - data: item data (only for upsert)
+//!
 //! For initial data snapshot, use GET /v1/rankings/{type}
 
 use axum::{
@@ -17,6 +23,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use crate::state::{AppState, BroadcastEvent};
@@ -167,6 +174,14 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     }
 }
 
+/// Get current timestamp in milliseconds
+fn now_ts_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 /// Listen to broadcast channel and forward matching events to WebSocket
 async fn run_broadcast_listener(
     mut broadcast_rx: tokio::sync::broadcast::Receiver<BroadcastEvent>,
@@ -176,91 +191,91 @@ async fn run_broadcast_listener(
     loop {
         match broadcast_rx.recv().await {
             Ok(event) => {
+                let ts = now_ts_ms();
+
                 // Filter events based on subscribed channel
+                // New flattened format: { type, channel, ts, op, key, data? }
                 let ws_msg = match (&event, ws_channel.as_str()) {
                     // NewListing event goes to new-listings channel
                     (BroadcastEvent::NewListing(item), "new-listings") => Some(serde_json::json!({
                         "type": "delta",
                         "channel": "new-listings",
-                        "data": {
-                            "type": "new_listing",
-                            "data": item
-                        }
+                        "ts": ts,
+                        "op": "upsert",
+                        "key": item.name,
+                        "data": item
                     })),
                     // TopSale event goes to top-sales channel
                     (BroadcastEvent::TopSale(item), "top-sales") => Some(serde_json::json!({
                         "type": "delta",
                         "channel": "top-sales",
-                        "data": {
-                            "type": "top_sale",
-                            "data": item
-                        }
+                        "ts": ts,
+                        "op": "upsert",
+                        "key": item.name,
+                        "data": item
                     })),
                     // BestDeal event goes to best-deals channel
                     (BroadcastEvent::BestDeal(item), "best-deals") => Some(serde_json::json!({
                         "type": "delta",
                         "channel": "best-deals",
-                        "data": {
-                            "type": "best_deal",
-                            "data": item
-                        }
+                        "ts": ts,
+                        "op": "upsert",
+                        "key": item.name,
+                        "data": item
                     })),
                     // RecentSale event goes to recent-sales channel
                     (BroadcastEvent::RecentSale(item), "recent-sales") => Some(serde_json::json!({
                         "type": "delta",
                         "channel": "recent-sales",
-                        "data": {
-                            "type": "recent_sale",
-                            "data": item
-                        }
+                        "ts": ts,
+                        "op": "upsert",
+                        "key": item.name,
+                        "data": item
                     })),
                     // MostTraded event goes to most-traded channel
                     (BroadcastEvent::MostTraded(item), "most-traded") => Some(serde_json::json!({
                         "type": "delta",
                         "channel": "most-traded",
-                        "data": {
-                            "type": "most_traded",
-                            "data": item
-                        }
+                        "ts": ts,
+                        "op": "upsert",
+                        "key": item.name,
+                        "data": item
                     })),
-                    // TopEarner event goes to top-earners channel
+                    // TopEarner event goes to top-earners channel (key is address)
                     (BroadcastEvent::TopEarner(item), "top-earners") => Some(serde_json::json!({
                         "type": "delta",
                         "channel": "top-earners",
-                        "data": {
-                            "type": "top_earner",
-                            "data": item
-                        }
+                        "ts": ts,
+                        "op": "upsert",
+                        "key": item.address,
+                        "data": item
                     })),
                     // RemoveNewListing event goes to new-listings channel
                     (BroadcastEvent::RemoveNewListing(name), "new-listings") => {
                         Some(serde_json::json!({
                             "type": "delta",
                             "channel": "new-listings",
-                            "data": {
-                                "type": "remove",
-                                "name": name
-                            }
+                            "ts": ts,
+                            "op": "remove",
+                            "key": name
                         }))
                     }
                     // RemoveTopSale event goes to top-sales channel
                     (BroadcastEvent::RemoveTopSale(name), "top-sales") => Some(serde_json::json!({
                         "type": "delta",
                         "channel": "top-sales",
-                        "data": {
-                            "type": "remove",
-                            "name": name
-                        }
+                        "ts": ts,
+                        "op": "remove",
+                        "key": name
                     })),
                     // RemoveBestDeal event goes to best-deals channel
                     (BroadcastEvent::RemoveBestDeal(name), "best-deals") => {
                         Some(serde_json::json!({
                             "type": "delta",
                             "channel": "best-deals",
-                            "data": {
-                                "type": "remove",
-                                "name": name
-                            }
+                            "ts": ts,
+                            "op": "remove",
+                            "key": name
                         }))
                     }
                     _ => None,
