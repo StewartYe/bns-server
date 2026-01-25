@@ -597,7 +597,7 @@ impl TradingService {
             status: PendingTxStatus::Submitted,
             previous_price_sats: None,
             price_sats: None,
-            seller_address: None,
+            seller_address: Some(db_listing.seller_address),
             buyer_address: None,
         };
 
