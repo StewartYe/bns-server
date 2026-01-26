@@ -1,0 +1,20 @@
+#!/bin/sh
+# Pre-commit hook for Rust project
+
+echo "Running pre-commit hooks..."
+
+# Check code formatting
+echo "Checking code formatting..."
+if ! cargo fmt --check; then
+    echo "❌ Code is not formatted. Please run 'cargo fmt' and commit again."
+    exit 1
+fi
+
+# Prepare SQLx queries
+echo "Preparing SQLx queries..."
+if ! cargo sqlx prepare --check -- --all-targets --all-features; then
+    echo "❌ SQLx prepare failed. Please run 'cargo sqlx prepare' and commit the changes."
+    exit 1
+fi
+
+echo "✅ Pre-commit checks passed!"

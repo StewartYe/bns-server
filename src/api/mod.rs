@@ -70,6 +70,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/me", get(auth::get_me))
         // Public trading endpoints
         .route("/trading/listings", get(trading::get_listings))
+        .route(
+            "/trading/{name}/new-price-range",
+            get(trading::new_price_range),
+        )
         // Rankings endpoints
         .route("/rankings/{type}", get(rankings::get_ranking))
         // WebSocket endpoint

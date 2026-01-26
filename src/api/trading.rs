@@ -5,6 +5,7 @@
 //! - POST /v1/trading/list - List a name for sale
 //! - GET /v1/trading/listings - Get all listed names
 
+use axum::extract::Path;
 use axum::{
     Extension, Json,
     extract::{Query, State},
@@ -13,8 +14,8 @@ use serde::Deserialize;
 
 use crate::domain::{
     BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetPoolRequest,
-    GetPoolResponse, ListRequest, ListResponse, ListingsResponse, RelistRequest, RelistResponse,
-    UserSession,
+    GetPoolResponse, ListRequest, ListResponse, ListingPriceRangeResponse, ListingsResponse,
+    RelistRequest, RelistResponse, UserSession,
 };
 use crate::error::Result;
 use crate::state::AppState;
@@ -138,4 +139,15 @@ pub async fn get_listings(
         .get_listings(query.limit, query.offset)
         .await?;
     Ok(Json(response))
+}
+
+pub async fn new_price_range(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<ListingPriceRangeResponse>> {
+    let resp = state
+        .trading_service
+        .name_price_range(name.as_str())
+        .await?;
+    Ok(Json(resp))
 }

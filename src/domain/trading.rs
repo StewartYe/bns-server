@@ -202,6 +202,14 @@ pub struct ListingsResponse {
     pub total: i64,
 }
 
+/// Response for get listing price range
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListingPriceRangeResponse {
+    pub min: u64,
+    pub max: u64,
+}
+
 /// Info about a listed name
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

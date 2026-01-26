@@ -20,6 +20,7 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
   - [Relist](#relist)
   - [Delist](#delist)
   - [Get All Listings](#get-all-listings)
+  - [Listing Price Range](#new-price-range)
 - [User Settings](#user-settings)
   - [Get Inventory](#get-inventory)
   - [Set Primary Name](#set-primary-name)
@@ -615,6 +616,39 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trad
 | `400` | Listing not found or not active |
 | `401` | Not authenticated |
 | `403` | Listing does not belong to the authenticated address |
+
+### New Price Range
+
+Change the price of your existing listing. Requires authentication.
+
+**Endpoint:** `GET /v1/trading/{name}/new-price-range`
+
+**Authentication:** No require
+
+**Request Body:** None
+
+
+**Example:**
+
+```bash
+curl -X GET https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/YEXS/new-price-range
+ ```
+
+**Response:**
+
+```json
+{
+  "min": 1000,
+  "max": 1260
+}
+```
+
+**Errors:**
+
+| Status | Description |
+|--------|-------------|
+| `500` | Internal server error |
+
 
 ### Delist
 
