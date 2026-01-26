@@ -72,7 +72,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/trading/listings", get(trading::get_listings))
         .route(
             "/trading/{name}/new-price-range",
-            get(trading::get_listings),
+            get(trading::new_price_range),
         )
         // Rankings endpoints
         .route("/rankings/{type}", get(rankings::get_ranking))
