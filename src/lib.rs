@@ -33,3 +33,6 @@ pub mod utils;
 pub use config::Config;
 pub use error::{AppError, Result};
 pub use state::AppState;
+
+pub const MIN_PRICE: u64 = 330;
+pub const MAX_PRICE: u64 = 100_000;

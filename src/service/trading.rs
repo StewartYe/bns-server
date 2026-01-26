@@ -11,8 +11,8 @@ use crate::api::rankings::NewListingItem;
 use crate::domain::{
     BuyAndDelistParams, BuyAndDelistRequest, BuyAndRelistParams, BuyAndRelistRequest, DelistParams,
     DelistRequest, DelistResponse, GetPoolRequest, GetPoolResponse, ListNameParams, ListRequest,
-    ListResponse, ListingInfo, ListingsResponse, PendingTx, PendingTxAction, PendingTxStatus,
-    RelistRequest, RelistResponse,
+    ListResponse, ListingInfo, ListingPriceRangeResponse, ListingsResponse, PendingTx,
+    PendingTxAction, PendingTxStatus, RelistRequest, RelistResponse,
 };
 use crate::error::{AppError, Result};
 use crate::infra::orchestrator_canister::InvokeArgs;
@@ -23,8 +23,10 @@ use crate::service::trading_validators::delist_validator::DelistValidator;
 use crate::service::trading_validators::list_validator::ListValidator;
 use crate::service::trading_validators::{TradingValidator, parse_psbt};
 use crate::service::{EventService, UserService};
+use crate::{MAX_PRICE, MIN_PRICE};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::cmp::min;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -225,7 +227,8 @@ impl TradingService {
             .await?;
 
         // === Step 10: Price Validation ===
-        self.validate_price(params.new_price)?;
+        self.validate_price(params.name.as_str(), params.new_price)
+            .await?;
 
         tracing::debug!(
             "Pool address {} verified for name '{}'",
@@ -299,7 +302,8 @@ impl TradingService {
                 &request.name
             )));
         }
-        self.validate_price(request.new_price)?;
+        self.validate_price(request.name.as_str(), request.new_price)
+            .await?;
 
         // Call canister to relist
         self.ic_agent
@@ -708,7 +712,8 @@ impl TradingService {
             .await?;
 
         // === Step 10: Price Validation ===
-        self.validate_price(params.price)?;
+        self.validate_price(params.name.as_str(), params.price)
+            .await?;
 
         tracing::debug!(
             "Pool address {} verified for name '{}'",
@@ -727,35 +732,7 @@ impl TradingService {
             }
         }
 
-        // === Calculate previous_price_sats ===
-        // Use last bought price (bought_and_relisted or bought_and_delisted) if exists,
-        // otherwise calculate from etching fee
-        let previous_price_sats = match self.postgres.get_last_bought_price(&params.name).await {
-            Ok(Some(price)) => {
-                tracing::info!(
-                    "Name {} has previous bought price {}, using as previous_price_sats",
-                    params.name,
-                    price
-                );
-                Some(price)
-            }
-            Ok(None) => {
-                // First time listing - calculate from etching fee
-                self.event_service
-                    .calculate_etching_fee_price(&params.name)
-                    .await
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to get last bought price for {}: {:?}",
-                    params.name,
-                    e
-                );
-                self.event_service
-                    .calculate_etching_fee_price(&params.name)
-                    .await
-            }
-        };
+        let previous_price_sats = self.calculate_previous_price(params.name.as_str()).await;
 
         // Build InvokeArgs
         let invoke_args = InvokeArgs {
@@ -798,6 +775,42 @@ impl TradingService {
             name: params.name,
             price_sats: params.price,
             seller_address: params.seller_address,
+        })
+    }
+
+    // === Calculate previous_price_sats ===
+    // Use last bought price (bought_and_relisted or bought_and_delisted) if exists,
+    // otherwise calculate from etching fee
+    pub async fn calculate_previous_price(&self, name: &str) -> Option<u64> {
+        match self.postgres.get_last_bought_price(name).await {
+            Ok(Some(price)) => {
+                tracing::info!(
+                    "Name {} has previous bought price {}, using as previous_price_sats",
+                    name,
+                    price
+                );
+                Some(price)
+            }
+            Ok(None) => {
+                // First time listing - calculate from etching fee
+                self.event_service.calculate_etching_fee_price(name).await
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get last bought price for {}: {:?}", name, e);
+                self.event_service.calculate_etching_fee_price(name).await
+            }
+        }
+    }
+
+    pub async fn name_price_range(&self, name: &str) -> Result<ListingPriceRangeResponse> {
+        let previous_price_sats = self
+            .calculate_previous_price(name)
+            .await
+            .unwrap_or(MIN_PRICE);
+        let max = previous_price_sats * 126 / 100;
+        Ok(ListingPriceRangeResponse {
+            min: previous_price_sats,
+            max: min(max, MAX_PRICE),
         })
     }
 
@@ -887,9 +900,9 @@ impl TradingService {
     }
 
     /// Validate listing price is within acceptable range
-    fn validate_price(&self, price: u64) -> Result<()> {
-        const MIN_PRICE: u64 = 100;
-        if price < MIN_PRICE {
+    async fn validate_price(&self, name: &str, price: u64) -> Result<()> {
+        let price_range = self.name_price_range(name).await?;
+        if price < price_range.min || price > price_range.max {
             return Err(AppError::BadRequest(format!(
                 "Price {} sats is below minimum {} sats",
                 price, MIN_PRICE
