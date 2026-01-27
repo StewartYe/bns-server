@@ -20,8 +20,8 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
   - [Relist](#relist)
   - [Delist](#delist)
   - [Get All Listings](#get-all-listings)
-  - [Listing Price Range](#new-price-range)
   - [user listing history](#user-listing-history)
+  - [get listing](#get-listing)
 - [User Settings](#user-settings)
   - [Get Inventory](#get-inventory)
   - [Set Primary Name](#set-primary-name)
@@ -618,39 +618,6 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trad
 | `401` | Not authenticated |
 | `403` | Listing does not belong to the authenticated address |
 
-### New Price Range
-
-Change the price of your existing listing. Requires authentication.
-
-**Endpoint:** `GET /v1/trading/{name}/new-price-range`
-
-**Authentication:** No require
-
-**Request Body:** None
-
-
-**Example:**
-
-```bash
-curl -X GET https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/YEXS/new-price-range
- ```
-
-**Response:**
-
-```json
-{
-  "min": 1000,
-  "max": 1260
-}
-```
-
-**Errors:**
-
-| Status | Description |
-|--------|-------------|
-| `500` | Internal server error |
-
-
 ### Delist
 
 Remove your listing from the marketplace.
@@ -757,7 +724,8 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/lis
       "priceSats": 100000,
       "status": "listed",
       "listedAt": "2025-12-25T15:24:54.805664Z",
-      "txId": "a1b2c3d4e5f6..."
+      "txId": "a1b2c3d4e5f6...",
+      "inscription_utxo_sats":1000
     }
   ],
   "total": 1
@@ -773,6 +741,53 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/lis
 | `bought_and_delisted` | Was bought and taken off market (historical) |
 | `relisted` | Price was changed by seller (historical) |
 | `delisted` | Was removed from sale by owner (historical) |
+
+
+
+### Get Listing
+
+Retrieve a listing by name.
+
+**Endpoint:** `GET /v1/trading/listing/{name}`
+
+**Path Parameters:**
+
+| Parameter | Type   | Default | Description |
+|-----------|--------|---------|-------------|
+| `name`    | string |         | a NFT name  |
+
+
+**Example:**
+
+```bash
+curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/listing/RUNESE"
+```
+
+**Response:**
+
+```json
+{
+  "listing": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "MY•RUNE•NAME",
+    "sellerAddress": "tb1q837dfu2xmthlx6a6c59dvw6v4t0erg6c4mn4e2",
+    "priceSats": 100000,
+    "status": "listed",
+    "listedAt": "2025-12-25T15:24:54.805664Z",
+    "txId": "a1b2c3d4e5f6...",
+    "inscription_utxo_sats": 10000
+  }or Null,
+  "pool_address": "tb1qcxx......"or null,
+  "last_price_sats": 11111
+}
+```
+
+**Listing Status Values:**
+
+| Status | Description |
+|--------|-------------|
+| `listed` | Currently listed and available for purchase |
+
 
 ---
 

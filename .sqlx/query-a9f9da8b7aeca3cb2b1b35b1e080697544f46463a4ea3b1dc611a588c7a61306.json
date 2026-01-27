@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT btc_address, primary_name, created_at, last_seen_at FROM users WHERE btc_address = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "btc_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "primary_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a9f9da8b7aeca3cb2b1b35b1e080697544f46463a4ea3b1dc611a588c7a61306"
+}

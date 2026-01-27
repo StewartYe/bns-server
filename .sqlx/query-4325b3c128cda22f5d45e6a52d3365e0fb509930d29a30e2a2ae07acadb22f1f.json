@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats\n             FROM listings WHERE seller_address=$1 or buyer_address=$2 ORDER BY listed_at DESC LIMIT $3 OFFSET $4",
+  "query": "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats\n             FROM listings WHERE status = 'listed' ORDER BY listed_at DESC LIMIT $1 OFFSET $2",
   "describe": {
     "columns": [
       {
@@ -57,12 +57,15 @@
         "ordinal": 10,
         "name": "new_price_sats",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "inscription_utxo_sats",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text",
         "Int8",
         "Int8"
       ]
@@ -76,10 +79,11 @@
       false,
       false,
       true,
+      false,
       true,
       true,
-      true
+      false
     ]
   },
-  "hash": "1ef715460b3aa5176d6863b8b8f13c2a30f302c979c8fec8666e31b02a2ced61"
+  "hash": "4325b3c128cda22f5d45e6a52d3365e0fb509930d29a30e2a2ae07acadb22f1f"
 }

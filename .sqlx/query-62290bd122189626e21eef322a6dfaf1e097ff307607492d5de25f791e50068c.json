@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats FROM  pending_txs WHERE status IN ('submitted', 'pending') ORDER BY created_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tx_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "action",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "previous_price_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "price_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "seller_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "buyer_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "inscription_utxo_sats",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "62290bd122189626e21eef322a6dfaf1e097ff307607492d5de25f791e50068c"
+}

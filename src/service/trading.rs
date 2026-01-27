@@ -10,10 +10,10 @@ use crate::AppError::BadRequest;
 use crate::api::rankings::NewListingItem;
 use crate::domain::{
     BuyAndDelistParams, BuyAndDelistRequest, BuyAndRelistParams, BuyAndRelistRequest, DelistParams,
-    DelistRequest, DelistResponse, GetPoolRequest, GetPoolResponse, ListNameParams, ListRequest,
-    ListResponse, ListingHistoriesResponse, ListingHistory, ListingInfo, ListingPriceRangeResponse,
-    ListingStatus, ListingsResponse, PendingTx, PendingTxAction, PendingTxStatus, RelistRequest,
-    RelistResponse, UserAction,
+    DelistRequest, DelistResponse, GetListingResponse, GetPoolRequest, GetPoolResponse,
+    ListNameParams, ListRequest, ListResponse, ListingHistoriesResponse, ListingHistory,
+    ListingInfo, ListingPriceRangeResponse, ListingStatus, ListingsResponse, PendingTx,
+    PendingTxAction, PendingTxStatus, RelistRequest, RelistResponse, UserAction,
 };
 use crate::error::{AppError, Result};
 use crate::infra::orchestrator_canister::InvokeArgs;
@@ -24,7 +24,7 @@ use crate::service::trading_validators::delist_validator::DelistValidator;
 use crate::service::trading_validators::list_validator::ListValidator;
 use crate::service::trading_validators::{TradingValidator, parse_psbt};
 use crate::service::{EventService, UserService};
-use crate::{MAX_PRICE, MIN_PRICE};
+use crate::{GLOBAL_MIN_PRICE, INIT_MAX_PRICE};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
@@ -256,7 +256,7 @@ impl TradingService {
             params.name,
             tx_id
         );
-
+        let output0_value = psbt.unsigned_tx.output[0].value.to_sat();
         let pending_tx = PendingTx {
             tx_id: tx_id.clone(),
             created_at: Utc::now(),
@@ -267,6 +267,7 @@ impl TradingService {
             price_sats: Some(params.new_price),
             seller_address: Some(db_listing.seller_address),
             buyer_address: Some(params.buyer_address.clone()),
+            inscription_utxo_sats: output0_value,
         };
 
         if let Err(e) = self.postgres.add_pending_tx(&pending_tx).await {
@@ -332,6 +333,7 @@ impl TradingService {
                 tx_id: old_listing.tx_id.clone(),
                 buyer_address: None,
                 new_price_sats: None,
+                inscription_utxo_sats: old_listing.inscription_utxo_sats,
             };
 
             if let Err(e) = self.postgres.create_listing(&new_listing).await {
@@ -471,6 +473,11 @@ impl TradingService {
             price_sats: None,
             seller_address: Some(db_listing.seller_address),
             buyer_address: Some(params.buyer_address.clone()),
+            inscription_utxo_sats: BuyAndDelistValidator::get_input0_value(
+                &psbt.inputs[0],
+                &psbt.unsigned_tx.input[0],
+            )
+            .unwrap_or_default(),
         };
 
         if let Err(e) = self.postgres.add_pending_tx(&pending_tx).await {
@@ -604,6 +611,11 @@ impl TradingService {
             price_sats: None,
             seller_address: Some(db_listing.seller_address),
             buyer_address: None,
+            inscription_utxo_sats: DelistValidator::get_input0_value(
+                &psbt.inputs[0],
+                &psbt.unsigned_tx.input[0],
+            )
+            .unwrap_or_default(),
         };
 
         if let Err(e) = self.postgres.add_pending_tx(&pending_tx).await {
@@ -722,19 +734,7 @@ impl TradingService {
             params.name
         );
 
-        // === Duplicate Listing Check ===
-        let pending_txs = self.postgres.get_pending_txs().await?;
-        for pending_tx in &pending_txs {
-            if pending_tx.name == params.name {
-                return Err(AppError::BadRequest(format!(
-                    "Name '{}' already has a pending listing transaction",
-                    params.name
-                )));
-            }
-        }
-
         let previous_price_sats = self.calculate_previous_price(params.name.as_str()).await;
-
         // Build InvokeArgs
         let invoke_args = InvokeArgs {
             client_info: None,
@@ -751,7 +751,7 @@ impl TradingService {
             params.name,
             tx_id
         );
-
+        let output0_value = psbt.unsigned_tx.output[0].value.to_sat();
         let pending_tx = PendingTx {
             tx_id: tx_id.clone(),
             created_at: Utc::now(),
@@ -762,6 +762,7 @@ impl TradingService {
             price_sats: Some(params.price),
             seller_address: Some(params.seller_address.clone()),
             buyer_address: None,
+            inscription_utxo_sats: output0_value,
         };
 
         if let Err(e) = self.postgres.add_pending_tx(&pending_tx).await {
@@ -781,7 +782,7 @@ impl TradingService {
 
     // === Calculate previous_price_sats ===
     // Use last bought price (bought_and_relisted or bought_and_delisted) if exists,
-    // otherwise calculate from etching fee
+    // otherwise calculate from etching fee and whether init list
     pub async fn calculate_previous_price(&self, name: &str) -> Option<u64> {
         match self.postgres.get_last_bought_price(name).await {
             Ok(Some(price)) => {
@@ -803,15 +804,30 @@ impl TradingService {
         }
     }
 
+    pub async fn get_listing(&self, name: &str) -> Result<GetListingResponse> {
+        let listing = self
+            .postgres
+            .get_listed_listing_by_name(&name)
+            .await?
+            .map(|l| ListingInfo::from(l));
+        let pool = self.postgres.get_pool_address(name).await?;
+        let price = self.calculate_previous_price(&name).await;
+        Ok(GetListingResponse {
+            listing,
+            last_price_sat: price.unwrap_or(GLOBAL_MIN_PRICE),
+            pool_address: pool,
+        })
+    }
+
     pub async fn name_price_range(&self, name: &str) -> Result<ListingPriceRangeResponse> {
         let previous_price_sats = self
             .calculate_previous_price(name)
             .await
-            .unwrap_or(MIN_PRICE);
+            .unwrap_or(GLOBAL_MIN_PRICE);
         let max = previous_price_sats * 126 / 100;
         Ok(ListingPriceRangeResponse {
             min: previous_price_sats,
-            max: min(max, MAX_PRICE),
+            max: min(max, INIT_MAX_PRICE),
         })
     }
 
@@ -830,18 +846,8 @@ impl TradingService {
 
         let (listings, total) = self.postgres.get_all_listings(limit, offset).await?;
 
-        let listing_infos: Vec<ListingInfo> = listings
-            .into_iter()
-            .map(|l| ListingInfo {
-                id: l.id,
-                name: l.name,
-                seller_address: l.seller_address,
-                price_sats: l.price_sats,
-                status: l.status,
-                listed_at: l.listed_at,
-                tx_id: l.tx_id,
-            })
-            .collect();
+        let listing_infos: Vec<ListingInfo> =
+            listings.into_iter().map(|l| ListingInfo::from(l)).collect();
 
         Ok(ListingsResponse {
             listings: listing_infos,
@@ -888,16 +894,18 @@ impl TradingService {
             .to_string();
             let name = listing.name.clone();
             let mut status = PendingTxStatus::Finalized;
-            if let Some(tx_id) = listing.tx_id {
-                match self.postgres.get_pending_tx_by_id(tx_id.as_str()).await {
-                    Ok(Some(tx)) => {
-                        status = tx.status;
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to get pending tx: {:?}", e);
-                    }
-                    _ => {}
+            match self
+                .postgres
+                .get_pending_tx_by_id(listing.tx_id.as_str())
+                .await
+            {
+                Ok(Some(tx)) => {
+                    status = tx.status;
                 }
+                Err(e) => {
+                    tracing::error!("Failed to get pending tx: {:?}", e);
+                }
+                _ => {}
             }
             histories.push(ListingHistory {
                 id,

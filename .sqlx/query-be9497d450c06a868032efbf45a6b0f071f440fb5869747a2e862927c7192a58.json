@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO pending_txs (tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\n            ON CONFLICT (tx_id) DO UPDATE SET\n                name = EXCLUDED.name,\n                action = EXCLUDED.action,\n                status = EXCLUDED.status,\n                previous_price_sats = EXCLUDED.previous_price_sats,\n                price_sats = EXCLUDED.price_sats,\n                seller_address = EXCLUDED.seller_address,\n                buyer_address = EXCLUDED.buyer_address,\n                inscription_utxo_sats = EXCLUDED.inscription_utxo_sats\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Timestamptz",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Int8",
+        "Varchar",
+        "Varchar",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "be9497d450c06a868032efbf45a6b0f071f440fb5869747a2e862927c7192a58"
+}

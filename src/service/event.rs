@@ -14,12 +14,10 @@ use crate::domain::{Listing, ListingStatus, PendingTx, PendingTxAction, PendingT
 use crate::infra::bns_canister::{BnsCanisterEvent, ReeActionStatus};
 use crate::infra::{DynBlockchainClient, DynPostgresClient, DynRedisClient, IcAgent};
 use crate::state::BroadcastEvent;
+use crate::{GLOBAL_MIN_PRICE, INIT_MAX_PRICE};
 use chrono::Utc;
 use tokio::sync::broadcast;
 use uuid::Uuid;
-
-/// Maximum previous price in sats
-const MAX_PREVIOUS_PRICE_SATS: u64 = 100000;
 
 /// Event service for canister event polling
 #[derive(Clone)]
@@ -307,9 +305,10 @@ impl EventService {
             listed_at: now,
             updated_at: now,
             previous_price_sats,
-            tx_id: Some(action_id.to_string()),
+            tx_id: action_id.to_string(),
             buyer_address: None,
             new_price_sats: None,
+            inscription_utxo_sats: pending_tx.inscription_utxo_sats,
         };
 
         if let Err(e) = self.postgres.create_listing(&listing).await {
@@ -542,9 +541,10 @@ impl EventService {
             listed_at: now,
             updated_at: now,
             previous_price_sats,
-            tx_id: Some(action_id.to_string()),
+            tx_id: action_id.to_string(),
             buyer_address: None,
             new_price_sats: None,
+            inscription_utxo_sats: pending_tx.inscription_utxo_sats,
         };
 
         if let Err(e) = self.postgres.create_listing(&listing).await {
@@ -670,13 +670,13 @@ impl EventService {
             }
         };
 
-        let previous_price = (fee_sats * 10).min(MAX_PREVIOUS_PRICE_SATS);
+        let previous_price = (fee_sats * 10).max(GLOBAL_MIN_PRICE).min(INIT_MAX_PRICE);
         tracing::info!(
             "Calculated previous_price_sats for {}: {} (etching fee {} * 10, capped at {})",
             name,
             previous_price,
             fee_sats,
-            MAX_PREVIOUS_PRICE_SATS
+            INIT_MAX_PRICE
         );
 
         Some(previous_price)

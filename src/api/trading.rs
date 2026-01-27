@@ -6,8 +6,8 @@
 //! - GET /v1/trading/listings - Get all listed names
 
 use crate::domain::{
-    BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetPoolRequest,
-    GetPoolResponse, ListRequest, ListResponse, ListingHistoriesResponse,
+    BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetListingResponse,
+    GetPoolRequest, GetPoolResponse, ListRequest, ListResponse, ListingHistoriesResponse,
     ListingPriceRangeResponse, ListingsResponse, RelistRequest, RelistResponse, UserSession,
 };
 use crate::error::Result;
@@ -137,6 +137,17 @@ pub async fn get_listings(
         .trading_service
         .get_listings(query.limit, query.offset)
         .await?;
+    Ok(Json(response))
+}
+
+/// Get all listed names with pagination
+///
+/// GET /v1/trading/listing/{name}
+pub async fn get_listing(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<GetListingResponse>> {
+    let response = state.trading_service.get_listing(name.as_str()).await?;
     Ok(Json(response))
 }
 

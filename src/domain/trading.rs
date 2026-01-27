@@ -86,11 +86,12 @@ pub struct Listing {
     /// Previous price (for discount calculation)
     pub previous_price_sats: u64,
     /// Bitcoin transaction ID
-    pub tx_id: Option<String>,
+    pub tx_id: String,
     /// Buyer's Bitcoin address (for bought_and_relisted, bought_and_delisted)
     pub buyer_address: Option<String>,
     /// New price in satoshis (for bought_and_relisted, relisted)
     pub new_price_sats: Option<u64>,
+    pub inscription_utxo_sats: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +233,15 @@ pub struct ListingsResponse {
     pub total: i64,
 }
 
+/// Response for get listings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetListingResponse {
+    pub listing: Option<ListingInfo>,
+    pub last_price_sat: u64,
+    pub pool_address: Option<String>,
+}
+
 /// Response for get user histories
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -258,7 +268,23 @@ pub struct ListingInfo {
     pub price_sats: u64,
     pub status: ListingStatus,
     pub listed_at: DateTime<Utc>,
-    pub tx_id: Option<String>,
+    pub tx_id: String,
+    pub inscription_utxo_sats: u64,
+}
+
+impl From<Listing> for ListingInfo {
+    fn from(listing: Listing) -> Self {
+        ListingInfo {
+            id: listing.id,
+            name: listing.name,
+            seller_address: listing.seller_address,
+            price_sats: listing.price_sats,
+            status: listing.status,
+            listed_at: listing.listed_at,
+            tx_id: listing.tx_id,
+            inscription_utxo_sats: listing.inscription_utxo_sats,
+        }
+    }
 }
 
 /// Buy action type
@@ -360,4 +386,5 @@ pub struct PendingTx {
     pub price_sats: Option<u64>,
     pub seller_address: Option<String>,
     pub buyer_address: Option<String>,
+    pub inscription_utxo_sats: u64,
 }

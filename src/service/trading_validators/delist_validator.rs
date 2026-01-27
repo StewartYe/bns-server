@@ -52,11 +52,7 @@ impl TradingValidator for DelistValidator {
         //Validate input0 is the listing's outpoint
         Self::validate_input0_utxo(&unsigned_tx.input[0], db_listing)?;
 
-        let expected_outpoint = db_listing
-            .tx_id
-            .as_ref()
-            .map(|tx_id| format!("{}:0", tx_id))
-            .unwrap_or_default();
+        let expected_outpoint = format!("{}:0", db_listing.tx_id);
         tracing::debug!(
             "PSBT validation passed: {} inputs, {} outputs, all signed, output[0]={} sats to {}, input[0]={}",
             psbt.inputs.len(),
