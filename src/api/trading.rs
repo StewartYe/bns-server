@@ -5,20 +5,19 @@
 //! - POST /v1/trading/list - List a name for sale
 //! - GET /v1/trading/listings - Get all listed names
 
+use crate::domain::{
+    BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetPoolRequest,
+    GetPoolResponse, ListRequest, ListResponse, ListingHistoriesResponse,
+    ListingPriceRangeResponse, ListingsResponse, RelistRequest, RelistResponse, UserSession,
+};
+use crate::error::Result;
+use crate::state::AppState;
 use axum::extract::Path;
 use axum::{
     Extension, Json,
     extract::{Query, State},
 };
 use serde::Deserialize;
-
-use crate::domain::{
-    BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetPoolRequest,
-    GetPoolResponse, ListRequest, ListResponse, ListingPriceRangeResponse, ListingsResponse,
-    RelistRequest, RelistResponse, UserSession,
-};
-use crate::error::Result;
-use crate::state::AppState;
 
 // ============================================================================
 // Get Pool Address
@@ -139,6 +138,18 @@ pub async fn get_listings(
         .get_listings(query.limit, query.offset)
         .await?;
     Ok(Json(response))
+}
+
+pub async fn history(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Path(offset): Path<u32>,
+) -> Result<Json<ListingHistoriesResponse>> {
+    let resp = state
+        .trading_service
+        .get_user_history(&session.btc_address, None, Some(offset))
+        .await?;
+    Ok(Json(resp))
 }
 
 pub async fn new_price_range(

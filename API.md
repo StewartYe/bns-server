@@ -21,6 +21,7 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
   - [Delist](#delist)
   - [Get All Listings](#get-all-listings)
   - [Listing Price Range](#new-price-range)
+  - [user listing history](#user-listing-history)
 - [User Settings](#user-settings)
   - [Get Inventory](#get-inventory)
   - [Set Primary Name](#set-primary-name)
@@ -681,6 +682,49 @@ Remove your listing from the marketplace.
   "name": "MY•RUNE•NAME"
 }
 ```
+
+
+### user listing history
+
+Get user's listing history
+
+**Endpoint:** `POST /v1/trading/history/{offset}`
+
+**Authentication:** Required (Bearer token or session cookie)
+
+**Request Body:** None
+
+**Path Parameters:**
+
+| Field    | Type | Description                                   |
+|----------|------|-----------------------------------------------|
+| `offset` | int  | the offset for pagable query, 0 is first page |
+
+**Response:**
+
+```json
+{
+  "listings": [{
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "MY•RUNE•NAME",
+    "priceStats": 10000 or Null,
+    "time": "2025-12-25T15:24:54.805664Z",
+    "actions": "BUY" | "SELL" | "LIST" | "DELIST",
+    "status": "submitted" | "pending" | "finalized" | "confirmed" | "rejected"
+  }],
+  "total": 100
+}
+```
+
+Submitted,
+/// Canister has started processing
+Pending,
+/// Transaction finalized in mempool
+Finalized,
+/// Transaction confirmed on chain
+Confirmed,
+/// Transaction rejected
+Rejected,
 
 ### Get All Listings
 

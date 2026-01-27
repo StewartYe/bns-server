@@ -5,14 +5,14 @@
 //! - Listing records
 //! - Name metadata
 
-use async_trait::async_trait;
-use sqlx::PgPool;
-use std::sync::Arc;
-
+use crate::AppError;
 use crate::domain::{
     Listing, ListingStatus, NameMetadata, PendingTx, PendingTxAction, PendingTxStatus, User,
 };
 use crate::error::Result;
+use async_trait::async_trait;
+use sqlx::PgPool;
+use std::sync::Arc;
 
 /// PostgreSQL client abstraction
 #[async_trait]
@@ -28,6 +28,13 @@ pub trait PostgresClient: Send + Sync {
 
     // Listing operations
     async fn get_all_listings(&self, limit: u32, offset: u32) -> Result<(Vec<Listing>, i64)>;
+    async fn get_user_history(
+        &self,
+        user: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Listing>, i64)>;
+
     async fn get_listed_listing_by_name(&self, name: &str) -> Result<Option<Listing>>;
     async fn get_listing_traded_count(&self, name: &str) -> Result<u64>;
     async fn get_top_earner(&self, user_address: &str) -> Result<(i64, u32)>;
@@ -63,7 +70,6 @@ pub trait PostgresClient: Send + Sync {
         status: PendingTxStatus,
     ) -> Result<Option<PendingTx>>;
     async fn get_last_bought_price(&self, name: &str) -> Result<Option<u64>>;
-
     // Name pool address cache
     async fn get_pool_address(&self, name: &str) -> Result<Option<String>>;
     async fn save_pool_address(&self, name: &str, pool_address: &str) -> Result<()>;
@@ -245,6 +251,32 @@ impl PostgresClient for PostgresClientImpl {
         .await?;
 
         Ok((rows.into_iter().map(Into::into).collect(), count.0))
+    }
+
+    async fn get_user_history(
+        &self,
+        user: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Listing>, i64)> {
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM listings WHERE seller_address=$1 or buyer_address=$1",
+            user
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(e))?
+        .unwrap_or_default();
+
+        let rows = sqlx::query_as!(ListingRow,
+            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats
+             FROM listings WHERE seller_address=$1 or buyer_address=$2 ORDER BY listed_at DESC LIMIT $3 OFFSET $4",
+            user,user, limit as i64, offset as i64
+        )
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok((rows.into_iter().map(Into::into).collect(), count))
     }
 
     async fn get_listed_listing_by_name(&self, name: &str) -> Result<Option<Listing>> {

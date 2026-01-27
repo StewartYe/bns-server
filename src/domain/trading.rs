@@ -47,6 +47,25 @@ impl Display for ListingStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UserAction {
+    SELL,
+    BUY,
+    DELIST,
+    LIST,
+}
+
+impl Display for UserAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UserAction::SELL => write!(f, "SELL"),
+            UserAction::BUY => write!(f, "BUY"),
+            UserAction::DELIST => write!(f, "DELIST"),
+            UserAction::LIST => write!(f, "LIST"),
+        }
+    }
+}
+
 /// Market listing entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Listing {
@@ -72,6 +91,17 @@ pub struct Listing {
     pub buyer_address: Option<String>,
     /// New price in satoshis (for bought_and_relisted, relisted)
     pub new_price_sats: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListingHistory {
+    pub id: String,
+    pub name: String,
+    pub action: String,
+    pub price_sats: Option<u64>,
+    pub status: String,
+    pub time: DateTime<Utc>,
 }
 
 // ============================================================================
@@ -199,6 +229,14 @@ pub struct RelistResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ListingsResponse {
     pub listings: Vec<ListingInfo>,
+    pub total: i64,
+}
+
+/// Response for get user histories
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListingHistoriesResponse {
+    pub listings: Vec<ListingHistory>,
     pub total: i64,
 }
 

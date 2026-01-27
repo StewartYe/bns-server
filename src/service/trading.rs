@@ -11,8 +11,9 @@ use crate::api::rankings::NewListingItem;
 use crate::domain::{
     BuyAndDelistParams, BuyAndDelistRequest, BuyAndRelistParams, BuyAndRelistRequest, DelistParams,
     DelistRequest, DelistResponse, GetPoolRequest, GetPoolResponse, ListNameParams, ListRequest,
-    ListResponse, ListingInfo, ListingPriceRangeResponse, ListingsResponse, PendingTx,
-    PendingTxAction, PendingTxStatus, RelistRequest, RelistResponse,
+    ListResponse, ListingHistoriesResponse, ListingHistory, ListingInfo, ListingPriceRangeResponse,
+    ListingStatus, ListingsResponse, PendingTx, PendingTxAction, PendingTxStatus, RelistRequest,
+    RelistResponse, UserAction,
 };
 use crate::error::{AppError, Result};
 use crate::infra::orchestrator_canister::InvokeArgs;
@@ -848,6 +849,71 @@ impl TradingService {
         })
     }
 
+    // ========================================================================
+    // Get Listings
+    // ========================================================================
+
+    /// Get all listed names with pagination
+    pub async fn get_user_history(
+        &self,
+        user: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<ListingHistoriesResponse> {
+        let limit = limit.unwrap_or(20).min(50);
+        let offset = offset.unwrap_or(0);
+
+        let (listings, total) = self.postgres.get_user_history(user, limit, offset).await?;
+        let mut histories = vec![];
+        for listing in listings {
+            let price_sats = if listing.status == ListingStatus::Delisted {
+                None
+            } else {
+                Some(listing.price_sats)
+            };
+            let id = listing.id.clone();
+            let time = listing.listed_at;
+            let action = match listing.status {
+                ListingStatus::Listed => UserAction::LIST,
+                ListingStatus::BoughtAndRelisted | ListingStatus::BoughtAndDelisted => {
+                    if listing.seller_address == user {
+                        UserAction::SELL
+                    } else {
+                        UserAction::BUY
+                    }
+                }
+                ListingStatus::Relisted => UserAction::LIST,
+                ListingStatus::Delisted => UserAction::DELIST,
+            }
+            .to_string();
+            let name = listing.name.clone();
+            let mut status = PendingTxStatus::Finalized;
+            if let Some(tx_id) = listing.tx_id {
+                match self.postgres.get_pending_tx_by_id(tx_id.as_str()).await {
+                    Ok(Some(tx)) => {
+                        status = tx.status;
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to get pending tx: {:?}", e);
+                    }
+                    _ => {}
+                }
+            }
+            histories.push(ListingHistory {
+                id,
+                name,
+                action,
+                price_sats,
+                time,
+                status: status.to_string(),
+            });
+        }
+        Ok(ListingHistoriesResponse {
+            listings: histories,
+            total,
+        })
+    }
+
     /// Get newest listings from Redis (for real-time display)
     pub async fn get_new_listings(&self, count: usize) -> Result<Vec<NewListingItem>> {
         self.redis.get_new_listings(count).await
@@ -904,8 +970,8 @@ impl TradingService {
         let price_range = self.name_price_range(name).await?;
         if price < price_range.min || price > price_range.max {
             return Err(AppError::BadRequest(format!(
-                "Price {} sats is below minimum {} sats",
-                price, MIN_PRICE
+                "Price {} sats isn't between {} and {} sats",
+                price, price_range.min, price_range.max
             )));
         }
         Ok(())
