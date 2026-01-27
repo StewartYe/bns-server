@@ -162,14 +162,3 @@ pub async fn history(
         .await?;
     Ok(Json(resp))
 }
-
-pub async fn new_price_range(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Result<Json<ListingPriceRangeResponse>> {
-    let resp = state
-        .trading_service
-        .name_price_range(name.as_str())
-        .await?;
-    Ok(Json(resp))
-}

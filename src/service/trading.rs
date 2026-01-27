@@ -826,8 +826,8 @@ impl TradingService {
             .unwrap_or(GLOBAL_MIN_PRICE);
         let max = previous_price_sats * 126 / 100;
         Ok(ListingPriceRangeResponse {
-            min: previous_price_sats,
-            max: min(max, INIT_MAX_PRICE),
+            min: GLOBAL_MIN_PRICE.max(max / 100),
+            max,
         })
     }
 
