@@ -111,9 +111,10 @@ struct ListingRow {
     listed_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
     previous_price_sats: Option<i64>,
-    tx_id: Option<String>,
+    tx_id: String,
     buyer_address: Option<String>,
     new_price_sats: Option<i64>,
+    inscription_utxo_sats: i64,
 }
 
 impl From<ListingRow> for Listing {
@@ -130,6 +131,7 @@ impl From<ListingRow> for Listing {
             tx_id: row.tx_id,
             buyer_address: row.buyer_address,
             new_price_sats: row.new_price_sats.map(|p| p as u64),
+            inscription_utxo_sats: row.inscription_utxo_sats as u64,
         }
     }
 }
@@ -146,6 +148,7 @@ struct PendingTxRow {
     price_sats: Option<i64>,
     seller_address: Option<String>,
     buyer_address: Option<String>,
+    inscription_utxo_sats: i64,
 }
 
 impl From<PendingTxRow> for PendingTx {
@@ -160,6 +163,7 @@ impl From<PendingTxRow> for PendingTx {
             price_sats: row.price_sats.map(|p| p as u64),
             seller_address: row.seller_address,
             buyer_address: row.buyer_address,
+            inscription_utxo_sats: row.inscription_utxo_sats as u64,
         }
     }
 }
@@ -167,10 +171,10 @@ impl From<PendingTxRow> for PendingTx {
 #[async_trait]
 impl PostgresClient for PostgresClientImpl {
     async fn get_user(&self, address: &str) -> Result<Option<User>> {
-        let row = sqlx::query_as::<_, User>(
+        let row = sqlx::query_as!(User,
             "SELECT btc_address, primary_name, created_at, last_seen_at FROM users WHERE btc_address = $1",
+            address
         )
-        .bind(address)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -201,13 +205,14 @@ impl PostgresClient for PostgresClientImpl {
     }
 
     async fn get_name_metadata(&self, name: &str) -> Result<Option<NameMetadata>> {
-        let row = sqlx::query_as::<_, NameMetadata>(
+        let row =
+            sqlx::query_as!(NameMetadata,
             "SELECT name, owner_address, description, url, twitter, email, created_at, updated_at
              FROM name_metadata WHERE name = $1",
+            name
         )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await?;
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(row)
     }
@@ -237,20 +242,22 @@ impl PostgresClient for PostgresClientImpl {
     }
 
     async fn get_all_listings(&self, limit: u32, offset: u32) -> Result<(Vec<Listing>, i64)> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM listings WHERE status = 'listed'")
-            .fetch_one(&self.pool)
-            .await?;
+        let count: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM listings WHERE status = 'listed'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| AppError::Database(e))?
+                .unwrap_or_default();
 
-        let rows = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats
+        let rows = sqlx::query_as!(ListingRow,
+            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
              FROM listings WHERE status = 'listed' ORDER BY listed_at DESC LIMIT $1 OFFSET $2",
+            limit as i64, offset as i64
         )
-        .bind(limit as i64)
-        .bind(offset as i64)
         .fetch_all(&self.pool)
         .await?;
 
-        Ok((rows.into_iter().map(Into::into).collect(), count.0))
+        Ok((rows.into_iter().map(Into::into).collect(), count))
     }
 
     async fn get_user_history(
@@ -269,7 +276,7 @@ impl PostgresClient for PostgresClientImpl {
         .unwrap_or_default();
 
         let rows = sqlx::query_as!(ListingRow,
-            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats
+            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
              FROM listings WHERE seller_address=$1 or buyer_address=$2 ORDER BY listed_at DESC LIMIT $3 OFFSET $4",
             user,user, limit as i64, offset as i64
         )
@@ -280,14 +287,13 @@ impl PostgresClient for PostgresClientImpl {
     }
 
     async fn get_listed_listing_by_name(&self, name: &str) -> Result<Option<Listing>> {
-        let row = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats
+        let row = sqlx::query_as!(ListingRow,
+            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
              FROM listings WHERE name = $1 AND status = 'listed' ORDER BY listed_at DESC LIMIT 1",
+            name
         )
-        .bind(name)
         .fetch_optional(&self.pool)
         .await?;
-
         Ok(row.map(Into::into))
     }
 
@@ -302,11 +308,11 @@ impl PostgresClient for PostgresClientImpl {
     }
 
     async fn get_top_earner(&self, user_address: &str) -> Result<(i64, u32)> {
-        let lists = sqlx::query_as::<_, ListingRow>(
-            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats
+        let lists = sqlx::query_as!(ListingRow,
+            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
              FROM listings WHERE seller_address = $1 AND status IN ('bought_and_relisted', 'bought_and_delisted')",
+                                                    user_address
         )
-        .bind(user_address)
         .fetch_all(&self.pool)
         .await?;
         let mut total_earn = 0;
@@ -319,8 +325,8 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn create_listing(&self, listing: &Listing) -> Result<()> {
         sqlx::query!(
-            "INSERT INTO listings (id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            "INSERT INTO listings (id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
             listing.id,
             listing.name,
             listing.seller_address,
@@ -331,7 +337,8 @@ impl PostgresClient for PostgresClientImpl {
             listing.previous_price_sats as i64,
             listing.tx_id,
             listing.buyer_address,
-            listing.new_price_sats.map(|p| p as i64)
+            listing.new_price_sats.map(|p| p as i64),
+            listing.inscription_utxo_sats as i64,
         )
         .execute(&self.pool)
         .await?;
@@ -466,8 +473,8 @@ impl PostgresClient for PostgresClientImpl {
     async fn add_pending_tx(&self, pending_tx: &PendingTx) -> Result<()> {
         sqlx::query!(
             r#"
-            INSERT INTO pending_txs (tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO pending_txs (tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (tx_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 action = EXCLUDED.action,
@@ -475,7 +482,8 @@ impl PostgresClient for PostgresClientImpl {
                 previous_price_sats = EXCLUDED.previous_price_sats,
                 price_sats = EXCLUDED.price_sats,
                 seller_address = EXCLUDED.seller_address,
-                buyer_address = EXCLUDED.buyer_address
+                buyer_address = EXCLUDED.buyer_address,
+                inscription_utxo_sats = EXCLUDED.inscription_utxo_sats
             "#,
             pending_tx.tx_id,
             pending_tx.created_at,
@@ -485,7 +493,8 @@ impl PostgresClient for PostgresClientImpl {
             pending_tx.previous_price_sats.map(|p| p as i64),
             pending_tx.price_sats.map(|p| p as i64),
             pending_tx.seller_address,
-            pending_tx.buyer_address
+            pending_tx.buyer_address,
+            pending_tx.inscription_utxo_sats as i64
         )
         .execute(&self.pool)
         .await?;
@@ -495,8 +504,8 @@ impl PostgresClient for PostgresClientImpl {
     }
 
     async fn get_pending_txs(&self) -> Result<Vec<PendingTx>> {
-        let rows = sqlx::query_as::<_, PendingTxRow>(
-            "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address FROM pending_txs WHERE status IN ('submitted', 'pending') ORDER BY created_at"
+        let rows = sqlx::query_as!(PendingTxRow,
+            "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats FROM  pending_txs WHERE status IN ('submitted', 'pending') ORDER BY created_at"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -505,10 +514,10 @@ impl PostgresClient for PostgresClientImpl {
     }
 
     async fn get_pending_tx_by_id(&self, tx_id: &str) -> Result<Option<PendingTx>> {
-        let row = sqlx::query_as::<_, PendingTxRow>(
-            "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address FROM pending_txs WHERE tx_id = $1"
+        let row = sqlx::query_as!(PendingTxRow,
+            "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats FROM pending_txs WHERE tx_id = $1",
+            tx_id
         )
-        .bind(tx_id)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -520,14 +529,13 @@ impl PostgresClient for PostgresClientImpl {
         tx_id: &str,
         status: PendingTxStatus,
     ) -> Result<Option<PendingTx>> {
-        let row = sqlx::query_as::<_, PendingTxRow>(
+        let row = sqlx::query_as!(crate::infra::postgres::PendingTxRow,
             r#"
             UPDATE pending_txs SET status = $1 WHERE tx_id = $2
-            RETURNING tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address
-            "#
+            RETURNING tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats
+            "#,
+            status.to_string(), tx_id
         )
-        .bind(status.to_string())
-        .bind(tx_id)
         .fetch_optional(&self.pool)
         .await?;
 

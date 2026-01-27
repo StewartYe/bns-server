@@ -60,11 +60,7 @@ pub trait TradingValidator {
     fn validate_input0_utxo(txin0: &TxIn, listing: &Listing) -> Result<()> {
         let prev_out = &txin0.previous_output;
         let input0_outpoint = format!("{}:{}", prev_out.txid, prev_out.vout);
-        let expected_outpoint = listing
-            .tx_id
-            .as_ref()
-            .map(|tx_id| format!("{}:0", tx_id))
-            .unwrap_or_default();
+        let expected_outpoint = format!("{}:0", listing.tx_id);
         if input0_outpoint != expected_outpoint {
             return Err(AppError::BadRequest(format!(
                 "input0 outpoint '{}' does not match listing outpoint '{}'",

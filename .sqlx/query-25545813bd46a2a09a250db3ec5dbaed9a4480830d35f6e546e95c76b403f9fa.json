@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats\n             FROM listings WHERE name = $1 AND status = 'listed' ORDER BY listed_at DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "seller_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "price_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "listed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "previous_price_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "tx_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "buyer_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 10,
+        "name": "new_price_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "inscription_utxo_sats",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "25545813bd46a2a09a250db3ec5dbaed9a4480830d35f6e546e95c76b403f9fa"
+}

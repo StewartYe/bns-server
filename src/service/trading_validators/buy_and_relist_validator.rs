@@ -53,12 +53,7 @@ impl TradingValidator for BuyAndRelistValidator {
         Self::validate_input0_utxo(&unsigned_tx.input[0], db_listing)?;
         //check pay to seller
         Self::validate_payto_seller(&unsigned_tx.output[1], db_listing)?;
-
-        let expected_outpoint = db_listing
-            .tx_id
-            .as_ref()
-            .map(|tx_id| format!("{}:0", tx_id))
-            .unwrap_or_default();
+        let expected_outpoint = format!("{}:0", db_listing.tx_id);
         tracing::debug!(
             "PSBT validation passed: {} inputs, {} outputs, all signed, output[0]={} sats to {}, input[0]={}",
             psbt.inputs.len(),

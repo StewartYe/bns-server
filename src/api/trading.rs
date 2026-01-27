@@ -6,9 +6,9 @@
 //! - GET /v1/trading/listings - Get all listed names
 
 use crate::domain::{
-    BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetPoolRequest,
-    GetPoolResponse, ListRequest, ListResponse, ListingHistoriesResponse,
-    ListingPriceRangeResponse, ListingsResponse, RelistRequest, RelistResponse, UserSession,
+    BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetListingResponse,
+    GetPoolRequest, GetPoolResponse, ListRequest, ListResponse, ListingHistoriesResponse,
+    ListingsResponse, RelistRequest, RelistResponse, UserSession,
 };
 use crate::error::Result;
 use crate::state::AppState;
@@ -140,6 +140,17 @@ pub async fn get_listings(
     Ok(Json(response))
 }
 
+/// Get all listed names with pagination
+///
+/// GET /v1/trading/listing/{name}
+pub async fn get_listing(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<GetListingResponse>> {
+    let response = state.trading_service.get_listing(name.as_str()).await?;
+    Ok(Json(response))
+}
+
 pub async fn history(
     State(state): State<AppState>,
     Extension(session): Extension<UserSession>,
@@ -148,17 +159,6 @@ pub async fn history(
     let resp = state
         .trading_service
         .get_user_history(&session.btc_address, None, Some(offset))
-        .await?;
-    Ok(Json(resp))
-}
-
-pub async fn new_price_range(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Result<Json<ListingPriceRangeResponse>> {
-    let resp = state
-        .trading_service
-        .name_price_range(name.as_str())
         .await?;
     Ok(Json(resp))
 }
