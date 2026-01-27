@@ -46,6 +46,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/trading/relist", post(trading::relist))
         .route("/trading/buy-and-relist", post(trading::buy_and_relist))
         .route("/trading/buy-and-delist", post(trading::buy_and_delist))
+        .route("/trading/history/{offset}", get(history))
         // User endpoints (require auth)
         .route("/user/inventory", get(user::get_inventory))
         .route("/user/primary-name", put(user::set_primary_name))
