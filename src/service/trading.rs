@@ -7,6 +7,7 @@
 //! - Future: Delist, Buy
 
 use crate::AppError::BadRequest;
+use crate::GLOBAL_MIN_PRICE;
 use crate::api::rankings::NewListingItem;
 use crate::domain::{
     BuyAndDelistParams, BuyAndDelistRequest, BuyAndRelistParams, BuyAndRelistRequest, DelistParams,
@@ -24,10 +25,8 @@ use crate::service::trading_validators::delist_validator::DelistValidator;
 use crate::service::trading_validators::list_validator::ListValidator;
 use crate::service::trading_validators::{TradingValidator, parse_psbt};
 use crate::service::{EventService, UserService};
-use crate::{GLOBAL_MIN_PRICE, INIT_MAX_PRICE};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::cmp::min;
 use std::sync::Arc;
 use uuid::Uuid;
 

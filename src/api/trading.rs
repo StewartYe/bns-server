@@ -8,7 +8,7 @@
 use crate::domain::{
     BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetListingResponse,
     GetPoolRequest, GetPoolResponse, ListRequest, ListResponse, ListingHistoriesResponse,
-    ListingPriceRangeResponse, ListingsResponse, RelistRequest, RelistResponse, UserSession,
+    ListingsResponse, RelistRequest, RelistResponse, UserSession,
 };
 use crate::error::Result;
 use crate::state::AppState;
