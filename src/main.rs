@@ -14,6 +14,8 @@ use bns_server::api::rankings::{
     BestDealItem, MostTradedItem, NewListingItem, RecentSaleItem, TopEarnerItem, TopSaleItem,
 };
 use bns_server::config::CONFIG;
+use bns_server::infra::ListingRow;
+use bns_server::service::MarketingService;
 use bns_server::{
     api,
     infra::{BlockchainClientImpl, IcAgent, PostgresClientImpl, RedisClient, RedisClientImpl},
@@ -114,6 +116,13 @@ async fn main() -> anyhow::Result<()> {
         broadcast_tx.clone(),
     ));
 
+    // Initialize marketing service
+    let marketing_service = Arc::new(MarketingService::new(
+        postgres_client.clone(),
+        redis_client.clone(),
+        user_service.clone(),
+    ));
+
     // Initialize trading service
     let trading_service = Arc::new(TradingService::new(
         event_service.clone(),
@@ -126,18 +135,16 @@ async fn main() -> anyhow::Result<()> {
 
     event_service.start_polling();
 
-    // Create postgres client for AppState (reuse the pool)
-    let postgres_state = Arc::new(PostgresClientImpl::new(&config.database_url).await?);
-
     // Create application state
     let state = AppState::new(
         config.clone(),
         auth_service,
         name_service,
         user_service,
+        marketing_service,
         trading_service,
         redis_client,
-        postgres_state,
+        postgres_client,
         pool,
         ic_agent,
         broadcast_tx,
@@ -184,8 +191,8 @@ async fn rebuild_rankings_from_postgres(
     tracing::info!("Cleared all ranking ZSets");
 
     // Step 2: Rebuild new_listings, top_sales, best_deals from listed items
-    let listed_rows = sqlx::query_as::<_, ListingRow>(
-        "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats
+    let listed_rows = sqlx::query_as!(ListingRow,
+        "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
          FROM listings WHERE status = 'listed' ORDER BY listed_at DESC",
     )
     .fetch_all(pool)
@@ -337,28 +344,6 @@ async fn rebuild_rankings_from_postgres(
 
     tracing::info!("All rankings rebuilt successfully");
     Ok(())
-}
-
-/// Database row for listings table (used in rebuild for listed items)
-#[derive(Debug, sqlx::FromRow)]
-struct ListingRow {
-    #[allow(dead_code)]
-    id: String,
-    name: String,
-    seller_address: String,
-    price_sats: i64,
-    #[allow(dead_code)]
-    status: String,
-    listed_at: chrono::DateTime<chrono::Utc>,
-    #[allow(dead_code)]
-    updated_at: chrono::DateTime<chrono::Utc>,
-    previous_price_sats: Option<i64>,
-    #[allow(dead_code)]
-    tx_id: Option<String>,
-    #[allow(dead_code)]
-    buyer_address: Option<String>,
-    #[allow(dead_code)]
-    new_price_sats: Option<i64>,
 }
 
 /// Database row for sold items (recent_sales)

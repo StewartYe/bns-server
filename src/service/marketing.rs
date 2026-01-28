@@ -1,0 +1,41 @@
+use crate::domain::MarketingInfo;
+use crate::error::Result;
+use crate::infra::{DynPostgresClient, DynRedisClient};
+use crate::service::DynUserService;
+use std::sync::Arc;
+/// Trading service
+pub struct MarketingService {
+    postgres: DynPostgresClient,
+    _redis: DynRedisClient,
+    _user_service: DynUserService,
+}
+
+impl MarketingService {
+    pub fn new(
+        postgres: DynPostgresClient,
+        _redis: DynRedisClient,
+        _user_service: DynUserService,
+    ) -> Self {
+        Self {
+            postgres,
+            _redis,
+            _user_service,
+        }
+    }
+
+    pub async fn get_marking_info(&self) -> Result<MarketingInfo> {
+        let (listing_count, valuation) = self.postgres.get_listing_count_and_valuation().await?;
+        let user_count = self.postgres.get_user_count().await?;
+        let (tx_count, volume) = self.postgres.get_24h_tx_vol().await?;
+        Ok(MarketingInfo {
+            total_users: user_count,
+            total_on_line: 0,
+            listings: listing_count,
+            txs_24h: tx_count,
+            vol_24h: volume,
+            valuation,
+        })
+    }
+}
+
+pub type DynMarketingService = Arc<MarketingService>;

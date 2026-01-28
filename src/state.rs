@@ -9,7 +9,9 @@ use crate::api::rankings::{
 };
 use crate::config::Config;
 use crate::infra::{DynPostgresClient, DynRedisClient, IcAgent};
-use crate::service::{DynAuthService, DynNameService, DynTradingService, DynUserService};
+use crate::service::{
+    DynAuthService, DynMarketingService, DynNameService, DynTradingService, DynUserService,
+};
 use tokio::sync::broadcast;
 
 /// Broadcast event types for real-time WebSocket updates
@@ -49,6 +51,9 @@ pub struct AppState {
     /// User service
     pub user_service: DynUserService,
 
+    /// Marketing service
+    pub marketing_service: DynMarketingService,
+
     /// Trading service
     pub trading_service: DynTradingService,
 
@@ -75,6 +80,7 @@ impl AppState {
         auth_service: DynAuthService,
         name_service: DynNameService,
         user_service: DynUserService,
+        marketing_service: DynMarketingService,
         trading_service: DynTradingService,
         redis_client: DynRedisClient,
         postgres: DynPostgresClient,
@@ -87,6 +93,7 @@ impl AppState {
             auth_service,
             name_service,
             user_service,
+            marketing_service,
             trading_service,
             redis_client,
             postgres,

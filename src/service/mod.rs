@@ -9,6 +9,7 @@
 
 mod auth;
 mod event;
+mod marketing;
 mod name;
 mod trading;
 mod trading_validators;
@@ -16,6 +17,7 @@ mod user;
 
 pub use auth::*;
 pub use event::*;
+pub use marketing::*;
 pub use name::*;
 pub use trading::*;
 pub use user::*;
