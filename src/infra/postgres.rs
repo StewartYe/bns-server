@@ -11,9 +11,17 @@ use crate::domain::{
 };
 use crate::error::Result;
 use async_trait::async_trait;
+use chrono::{TimeDelta, Utc};
+use rust_decimal::prelude::ToPrimitive;
 use sqlx::PgPool;
+use sqlx::types::BigDecimal;
+use std::ops::Sub;
 use std::sync::Arc;
 
+pub type ListingCount = u64;
+pub type Valuation = u64;
+pub type TxCount = u64;
+pub type Volume = u64;
 /// PostgreSQL client abstraction
 #[async_trait]
 pub trait PostgresClient: Send + Sync {
@@ -82,6 +90,9 @@ pub trait PostgresClient: Send + Sync {
     async fn get_pending_delist_names(&self, seller_address: &str) -> Result<Vec<String>>;
     /// Get names with pending buy_and_delist transactions for a buyer
     async fn get_pending_buy_and_delist_names(&self, buyer_address: &str) -> Result<Vec<String>>;
+    async fn get_listing_count_and_valuation(&self) -> Result<(ListingCount, Valuation)>;
+    async fn get_user_count(&self) -> Result<u64>;
+    async fn get_24h_tx_vol(&self) -> Result<(TxCount, Volume)>;
 }
 
 /// PostgreSQL client implementation
@@ -102,19 +113,19 @@ impl PostgresClientImpl {
 
 /// Database row for listings table
 #[derive(Debug, sqlx::FromRow)]
-struct ListingRow {
-    id: String,
-    name: String,
-    seller_address: String,
-    price_sats: i64,
-    status: String,
-    listed_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    previous_price_sats: Option<i64>,
-    tx_id: String,
-    buyer_address: Option<String>,
-    new_price_sats: Option<i64>,
-    inscription_utxo_sats: i64,
+pub struct ListingRow {
+    pub id: String,
+    pub name: String,
+    pub seller_address: String,
+    pub price_sats: i64,
+    pub status: String,
+    pub listed_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub previous_price_sats: Option<i64>,
+    pub tx_id: String,
+    pub buyer_address: Option<String>,
+    pub new_price_sats: Option<i64>,
+    pub inscription_utxo_sats: i64,
 }
 
 impl From<ListingRow> for Listing {
@@ -624,6 +635,44 @@ impl PostgresClient for PostgresClientImpl {
         .await?;
 
         Ok(rows.into_iter().map(|(name,)| name).collect())
+    }
+
+    async fn get_listing_count_and_valuation(&self) -> Result<(ListingCount, Valuation)> {
+        #[derive(sqlx::FromRow)]
+        struct Cv {
+            pub listing_count: Option<i64>,
+            pub valuation: Option<BigDecimal>,
+        }
+        let temp = sqlx::query_as!(Cv,"SELECT count(*) as listing_count, sum(price_sats) as valuation FROM listings WHERE status = 'listed'").fetch_one(&self.pool).await?;
+        Ok((
+            temp.listing_count.unwrap_or_default() as u64,
+            temp.valuation
+                .unwrap_or_default()
+                .to_u64()
+                .unwrap_or_default(),
+        ))
+    }
+
+    async fn get_user_count(&self) -> Result<u64> {
+        let count = sqlx::query_scalar!("SELECT count(*) from users")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count.map(|c| c as u64).unwrap_or_default())
+    }
+
+    async fn get_24h_tx_vol(&self) -> Result<(TxCount, Volume)> {
+        #[derive(sqlx::FromRow)]
+        struct Tcv {
+            pub tx_count: Option<i64>,
+            pub volume: Option<BigDecimal>,
+        }
+        let now = Utc::now();
+        let past_24h = now.sub(TimeDelta::days(1));
+        let temp = sqlx::query_as!(Tcv,"SELECT count(*) as tx_count, sum(price_sats) as volume FROM listings WHERE status in (  'bought_and_relisted', 'bought_and_delisted') and updated_at >=$1", past_24h).fetch_one(&self.pool).await?;
+        Ok((
+            temp.tx_count.unwrap_or_default() as u64,
+            temp.volume.unwrap_or_default().to_u64().unwrap_or_default(),
+        ))
     }
 }
 

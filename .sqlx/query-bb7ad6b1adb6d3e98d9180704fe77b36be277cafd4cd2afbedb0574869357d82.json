@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) as tx_count, sum(price_sats) as volume FROM listings WHERE status in (  'bought_and_relisted', 'bought_and_delisted') and updated_at >=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tx_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "volume",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "bb7ad6b1adb6d3e98d9180704fe77b36be277cafd4cd2afbedb0574869357d82"
+}

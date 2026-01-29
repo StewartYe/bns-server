@@ -8,6 +8,7 @@
 //! - WebSocket: Real-time updates
 
 mod auth;
+mod marketing;
 mod name;
 pub mod rankings;
 mod trading;
@@ -72,6 +73,7 @@ pub fn build_router(state: AppState) -> Router {
         // Public trading endpoints
         .route("/trading/listings", get(trading::get_listings))
         .route("/trading/listing/{name}", get(trading::get_listing))
+        .route("/marketing", get(marketing::marketing_info))
         // Rankings endpoints
         .route("/rankings/{type}", get(rankings::get_ranking))
         // WebSocket endpoint
