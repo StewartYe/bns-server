@@ -29,8 +29,8 @@ impl MarketingService {
         let (tx_count, volume) = self.postgres.get_24h_tx_vol().await?;
         Ok(MarketingInfo {
             total_users: user_count,
-            total_on_line: 0,
-            listings: listing_count,
+            total_online: 0,
+            total_listings: listing_count,
             txs_24h: tx_count,
             vol_24h: volume,
             valuation,

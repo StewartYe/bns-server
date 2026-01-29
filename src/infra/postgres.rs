@@ -639,11 +639,11 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn get_listing_count_and_valuation(&self) -> Result<(ListingCount, Valuation)> {
         #[derive(sqlx::FromRow)]
-        struct CV {
+        struct Cv {
             pub listing_count: Option<i64>,
             pub valuation: Option<BigDecimal>,
         }
-        let temp = sqlx::query_as!(CV,"SELECT count(*) as listing_count, sum(price_sats) as valuation FROM listings WHERE status = 'listed'").fetch_one(&self.pool).await?;
+        let temp = sqlx::query_as!(Cv,"SELECT count(*) as listing_count, sum(price_sats) as valuation FROM listings WHERE status = 'listed'").fetch_one(&self.pool).await?;
         Ok((
             temp.listing_count.unwrap_or_default() as u64,
             temp.valuation
@@ -662,13 +662,13 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn get_24h_tx_vol(&self) -> Result<(TxCount, Volume)> {
         #[derive(sqlx::FromRow)]
-        struct TCV {
+        struct Tcv {
             pub tx_count: Option<i64>,
             pub volume: Option<BigDecimal>,
         }
         let now = Utc::now();
         let past_24h = now.sub(TimeDelta::days(1));
-        let temp = sqlx::query_as!(TCV,"SELECT count(*) as tx_count, sum(price_sats) as volume FROM listings WHERE status in (  'bought_and_relisted', 'bought_and_delisted') and updated_at >=$1", past_24h).fetch_one(&self.pool).await?;
+        let temp = sqlx::query_as!(Tcv,"SELECT count(*) as tx_count, sum(price_sats) as volume FROM listings WHERE status in (  'bought_and_relisted', 'bought_and_delisted') and updated_at >=$1", past_24h).fetch_one(&self.pool).await?;
         Ok((
             temp.tx_count.unwrap_or_default() as u64,
             temp.volume.unwrap_or_default().to_u64().unwrap_or_default(),

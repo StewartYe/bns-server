@@ -29,6 +29,8 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
   - [Update Name Metadata](#update-name-metadata)
 - [Rankings](#rankings)
   - [Get Ranking](#get-ranking)
+- [Marketing](#marketing)
+  - [Get Marketing Info](#get-marketing-infp)
 - [WebSocket](#websocket)
   - [Architecture](#architecture)
   - [Connection](#connection)
@@ -1118,6 +1120,38 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/rankings/new
 
 ---
 
+## Marketing
+### Get Marketing Info
+
+Get the marketing statistic info.
+
+**Endpoint:** `GET /v1/marketing`
+
+**Path Parameters:**
+  None
+
+
+**Example:**
+
+```bash
+curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/marketing
+```
+
+**Response (new-listings):**
+
+```json
+{
+  "total_users": 10000,
+  "total_online": 1000,
+  "total_listings": 1222,
+  "txs_24h": 222,
+  "vol_24h": 1202020,
+  "valuation": 102020202
+}
+```
+
+
+---
 ## WebSocket
 
 Real-time delta updates for rankings via in-memory broadcast.
