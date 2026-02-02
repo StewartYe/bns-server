@@ -11,6 +11,8 @@ mod auth;
 mod marketing;
 mod name;
 pub mod rankings;
+mod shout_out;
+mod star;
 mod trading;
 mod user;
 mod ws;
@@ -47,7 +49,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/trading/relist", post(trading::relist))
         .route("/trading/buy-and-relist", post(trading::buy_and_relist))
         .route("/trading/buy-and-delist", post(trading::buy_and_delist))
-        .route("/trading/history/{offset}", get(history))
+        .route("/user/trading/history/{offset}", get(user_history))
         // User endpoints (require auth)
         .route("/user/inventory", get(user::get_inventory))
         .route("/user/primary-name", put(user::set_primary_name))
@@ -56,6 +58,9 @@ pub fn build_router(state: AppState) -> Router {
             "/user/names/{name}/metadata",
             put(user::update_name_metadata),
         )
+        .route("/names/star/{name}", put(star::star))
+        .route("/names/star/{name}", delete(star::unstar))
+        .route("/user/stars", get(star::get_stars))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth_middleware,
@@ -73,6 +78,7 @@ pub fn build_router(state: AppState) -> Router {
         // Public trading endpoints
         .route("/trading/listings", get(trading::get_listings))
         .route("/trading/listing/{name}", get(trading::get_listing))
+        .route("/name/trading/history/{offset}", get(name_history))
         .route("/marketing", get(marketing::marketing_info))
         // Rankings endpoints
         .route("/rankings/{type}", get(rankings::get_ranking))

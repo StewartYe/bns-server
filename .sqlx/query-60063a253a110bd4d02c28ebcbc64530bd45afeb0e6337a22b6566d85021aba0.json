@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM stars WHERE user_address = $1 AND target = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "60063a253a110bd4d02c28ebcbc64530bd45afeb0e6337a22b6566d85021aba0"
+}

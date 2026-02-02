@@ -7,8 +7,8 @@
 
 use crate::domain::{
     BuyAndDelistRequest, BuyAndRelistRequest, DelistRequest, DelistResponse, GetListingResponse,
-    GetPoolRequest, GetPoolResponse, ListRequest, ListResponse, ListingHistoriesResponse,
-    ListingsResponse, RelistRequest, RelistResponse, UserSession,
+    GetPoolRequest, GetPoolResponse, ListRequest, ListResponse, ListingsResponse,
+    NameHistoriesResponse, RelistRequest, RelistResponse, UserHistoriesResponse, UserSession,
 };
 use crate::error::Result;
 use crate::state::AppState;
@@ -151,14 +151,26 @@ pub async fn get_listing(
     Ok(Json(response))
 }
 
-pub async fn history(
+pub async fn user_history(
     State(state): State<AppState>,
     Extension(session): Extension<UserSession>,
     Path(offset): Path<u32>,
-) -> Result<Json<ListingHistoriesResponse>> {
+) -> Result<Json<UserHistoriesResponse>> {
     let resp = state
         .trading_service
         .get_user_history(&session.btc_address, None, Some(offset))
+        .await?;
+    Ok(Json(resp))
+}
+
+pub async fn name_history(
+    State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
+    Path(offset): Path<u32>,
+) -> Result<Json<NameHistoriesResponse>> {
+    let resp = state
+        .trading_service
+        .get_name_history(&session.btc_address, None, Some(offset))
         .await?;
     Ok(Json(resp))
 }

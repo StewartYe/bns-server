@@ -10,6 +10,8 @@ use std::fmt::Display;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ListingStatus {
+    ///the listing record had been delist
+    List,
     /// Currently listed and available for purchase
     Listed,
     /// Was bought and immediately re-listed (historical)
@@ -38,6 +40,7 @@ impl From<String> for ListingStatus {
 impl Display for ListingStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ListingStatus::List => write!(f, "list"),
             ListingStatus::Listed => write!(f, "listed"),
             ListingStatus::BoughtAndRelisted => write!(f, "bought_and_relisted"),
             ListingStatus::BoughtAndDelisted => write!(f, "bought_and_delisted"),
@@ -152,6 +155,7 @@ pub struct BuyAndRelistParams {
     pub name: String,
     pub payment_sats: u64,
     pub buyer_address: String,
+    pub fee_sats: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub buyer_token_address: Option<String>,
     pub new_price: u64,
@@ -168,6 +172,7 @@ pub struct BuyAndDelistParams {
     pub name: String,
     pub payment_sats: u64,
     pub buyer_address: String,
+    pub fee_sats: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub buyer_token_address: Option<String>,
 }
@@ -240,14 +245,31 @@ pub struct GetListingResponse {
     pub listing: Option<ListingInfo>,
     pub last_price_sat: u64,
     pub pool_address: Option<String>,
+    pub fee_sats: Option<u64>,
 }
 
 /// Response for get user histories
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ListingHistoriesResponse {
+pub struct UserHistoriesResponse {
     pub listings: Vec<ListingHistory>,
     pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NameHistoriesResponse {
+    pub listings: Vec<NameDealHistory>,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NameDealHistory {
+    pub seller_address: String,
+    pub buyer_address: String,
+    pub price_sats: u64,
+    pub time: DateTime<Utc>,
 }
 
 /// Response for get listing price range

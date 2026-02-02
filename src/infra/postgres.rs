@@ -7,7 +7,8 @@
 
 use crate::AppError;
 use crate::domain::{
-    Listing, ListingStatus, NameMetadata, PendingTx, PendingTxAction, PendingTxStatus, User,
+    Listing, ListingStatus, NameMetadata, PendingTx, PendingTxAction, PendingTxStatus, Star,
+    StarTargetType, User,
 };
 use crate::error::Result;
 use async_trait::async_trait;
@@ -43,6 +44,13 @@ pub trait PostgresClient: Send + Sync {
         offset: u32,
     ) -> Result<(Vec<Listing>, i64)>;
 
+    async fn get_name_history(
+        &self,
+        name: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Listing>, u64)>;
+
     async fn get_listed_listing_by_name(&self, name: &str) -> Result<Option<Listing>>;
     async fn get_listing_traded_count(&self, name: &str) -> Result<u64>;
     async fn get_top_earner(&self, user_address: &str) -> Result<(i64, u32)>;
@@ -63,7 +71,7 @@ pub trait PostgresClient: Send + Sync {
         buyer_address: &str,
     ) -> Result<()>;
     async fn update_listing_to_relisted(&self, id: &str, new_price_sats: u64) -> Result<()>;
-    async fn update_listing_to_delisted(&self, id: &str) -> Result<()>;
+    async fn update_listing_to_list(&self, id: &str) -> Result<()>;
     // System state operations (event polling)
     async fn get_event_offset(&self) -> Result<u64>;
     async fn set_event_offset(&self, offset: u64) -> Result<()>;
@@ -93,6 +101,9 @@ pub trait PostgresClient: Send + Sync {
     async fn get_listing_count_and_valuation(&self) -> Result<(ListingCount, Valuation)>;
     async fn get_user_count(&self) -> Result<u64>;
     async fn get_24h_tx_vol(&self) -> Result<(TxCount, Volume)>;
+    async fn star(&self, user: &str, name: &str, target_type: StarTargetType) -> Result<()>;
+    async fn unstar(&self, user: &str, name: &str) -> Result<()>;
+    async fn user_stars(&self, user: &str) -> Result<Vec<Star>>;
 }
 
 /// PostgreSQL client implementation
@@ -297,6 +308,25 @@ impl PostgresClient for PostgresClientImpl {
         Ok((rows.into_iter().map(Into::into).collect(), count))
     }
 
+    async fn get_name_history(
+        &self,
+        name: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Listing>, u64)> {
+        let count = self.get_listing_traded_count(name).await?;
+
+        let rows = sqlx::query_as!(ListingRow,
+            "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
+             FROM listings WHERE name = $1 AND status IN ('bought_and_relisted', 'bought_and_delisted') ORDER BY listed_at DESC LIMIT $2 OFFSET $3",
+            name, limit as i64, offset as i64
+        )
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok((rows.into_iter().map(Into::into).collect(), count))
+    }
+
     async fn get_listed_listing_by_name(&self, name: &str) -> Result<Option<Listing>> {
         let row = sqlx::query_as!(ListingRow,
             "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
@@ -442,9 +472,9 @@ impl PostgresClient for PostgresClientImpl {
         Ok(())
     }
 
-    async fn update_listing_to_delisted(&self, id: &str) -> Result<()> {
+    async fn update_listing_to_list(&self, id: &str) -> Result<()> {
         sqlx::query!(
-            "UPDATE listings SET status = 'delisted', updated_at = NOW() WHERE id = $1",
+            "UPDATE listings SET status = 'list', updated_at = NOW() WHERE id = $1",
             id
         )
         .execute(&self.pool)
@@ -673,6 +703,38 @@ impl PostgresClient for PostgresClientImpl {
             temp.tx_count.unwrap_or_default() as u64,
             temp.volume.unwrap_or_default().to_u64().unwrap_or_default(),
         ))
+    }
+
+    async fn star(&self, user: &str, target: &str, target_type: StarTargetType) -> Result<()> {
+        sqlx::query!(
+            "INSERT INTO stars (user_address, target, target_type)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_address, target) DO UPDATE SET
+                user_address = EXCLUDED.user_address,
+                 target = EXCLUDED.target,
+                 target_type = EXCLUDED.target_type",
+            user,
+            target,
+            target_type.to_string(),
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn unstar(&self, user: &str, target: &str) -> Result<()> {
+        sqlx::query!(
+            "DELETE FROM stars WHERE user_address = $1 AND target = $2",
+            user,
+            target
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+    async fn user_stars(&self, user: &str) -> Result<Vec<Star>> {
+        let v = sqlx::query_as!(Star, r#"SELECT id, user_address, target, target_type as "target_type:StarTargetType", created_at from stars where user_address = $1"#, user ).fetch_all(&self.pool).await?;
+        Ok(v)
     }
 }
 

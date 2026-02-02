@@ -15,7 +15,7 @@ use bns_server::api::rankings::{
 };
 use bns_server::config::CONFIG;
 use bns_server::infra::ListingRow;
-use bns_server::service::MarketingService;
+use bns_server::service::{MarketingService, StarService};
 use bns_server::{
     api,
     infra::{BlockchainClientImpl, IcAgent, PostgresClientImpl, RedisClient, RedisClientImpl},
@@ -133,6 +133,11 @@ async fn main() -> anyhow::Result<()> {
         user_service.clone(),
     ));
 
+    let star_service = Arc::new(StarService::new(
+        postgres_client.clone(),
+        blockchain_client.clone(),
+    ));
+
     event_service.start_polling();
 
     // Create application state
@@ -143,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
         user_service,
         marketing_service,
         trading_service,
+        star_service,
         redis_client,
         postgres_client,
         pool,

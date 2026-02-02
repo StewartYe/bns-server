@@ -1,17 +1,16 @@
 use crate::AppError;
-use crate::domain::Listing;
+use crate::domain::{ListNameParams, Listing};
 use crate::error::Result;
 use crate::service::trading_validators::TradingValidator;
 use bitcoin::Psbt;
 
 pub struct ListValidator;
-impl TradingValidator for ListValidator {
+impl TradingValidator<ListNameParams> for ListValidator {
     fn validate_psbt(
         psbt: &Psbt,
-        _initiator_address: &str,
         pool_address: &str,
-        _name: &str,
         _listing: Option<&Listing>,
+        _action_params: &ListNameParams,
     ) -> Result<()> {
         let unsigned_tx = &psbt.unsigned_tx;
         // Verify all inputs are signed

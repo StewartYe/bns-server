@@ -7,10 +7,13 @@
 
 mod marketing;
 mod name;
+mod shout_out;
+mod star;
 mod trading;
 mod user;
 
 pub use marketing::*;
 pub use name::*;
+pub use star::*;
 pub use trading::*;
 pub use user::*;

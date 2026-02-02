@@ -437,12 +437,8 @@ impl EventService {
         let name = &pending_tx.name;
 
         if let Ok(Some(prev_listing)) = self.postgres.get_listed_listing_by_name(name).await {
-            // Update to delisted
-            match self
-                .postgres
-                .update_listing_to_delisted(&prev_listing.id)
-                .await
-            {
+            // Update to list
+            match self.postgres.update_listing_to_list(&prev_listing.id).await {
                 Ok(_) => {
                     tracing::info!("Updated listing {} to delisted", name);
                 }
@@ -450,7 +446,29 @@ impl EventService {
                     tracing::error!("Failed to update listing status: {:?}", e);
                 }
             }
-
+            let now = Utc::now();
+            let new_delist = Listing {
+                id: Uuid::new_v4().to_string(),
+                name: prev_listing.name.clone(),
+                seller_address: prev_listing.seller_address.clone(),
+                price_sats: prev_listing.price_sats,
+                status: ListingStatus::Delisted,
+                listed_at: now,
+                updated_at: now,
+                previous_price_sats: prev_listing.previous_price_sats,
+                tx_id: pending_tx.tx_id.clone(),
+                buyer_address: None,
+                new_price_sats: None,
+                inscription_utxo_sats: pending_tx.inscription_utxo_sats.clone(),
+            };
+            match self.postgres.create_listing(&new_delist).await {
+                Ok(_) => {
+                    tracing::info!("add new delisted listing {}", name);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create delisted listing: {:?}", e);
+                }
+            }
             // Remove from listing rankings: new_listings, top_sales, best_deals
             self.remove_listing_rankings(name).await;
         }
