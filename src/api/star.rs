@@ -6,11 +6,11 @@ use axum::{Extension, Json};
 pub async fn star(
     State(state): State<AppState>,
     Extension(session): Extension<UserSession>,
-    Path(name): Path<String>,
+    Path(target): Path<String>,
 ) -> crate::Result<()> {
     state
         .star_service
-        .star(session.btc_address.as_str(), name.as_str())
+        .star(session.btc_address.as_str(), target.as_str())
         .await?;
     Ok(())
 }
@@ -18,11 +18,11 @@ pub async fn star(
 pub async fn unstar(
     State(state): State<AppState>,
     Extension(session): Extension<UserSession>,
-    Path(name): Path<String>,
+    Path(target): Path<String>,
 ) -> crate::Result<()> {
     state
         .star_service
-        .unstar(session.btc_address.as_str(), name.as_str())
+        .unstar(session.btc_address.as_str(), target.as_str())
         .await?;
     Ok(())
 }
