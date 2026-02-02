@@ -663,7 +663,7 @@ Remove your listing from the marketplace.
 
 Get user's listing history
 
-**Endpoint:** `POST /v1/trading/history/{offset}`
+**Endpoint:** `GET /v1/user/trading/history/{offset}`
 
 **Authentication:** Required (Bearer token or session cookie)
 
@@ -696,7 +696,7 @@ Get user's listing history
 
 Get a name's deal history
 
-**Endpoint:** `POST /v1/name/trading/history/{name}/{offset}`
+**Endpoint:** `GET /v1/name/trading/history/{name}/{offset}`
 
 **Authentication:** Required (Bearer token or session cookie)
 
