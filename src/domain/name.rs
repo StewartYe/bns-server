@@ -47,6 +47,12 @@ pub struct NameDetail {
     pub listing: Option<NameListingInfo>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamePoint {
+    pub name: String,
+    pub points: i64,
+    pub created_at: DateTime<Utc>,
+}
 /// Brief listing info embedded in name detail
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NameListingInfo {
