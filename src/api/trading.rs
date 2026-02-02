@@ -165,7 +165,7 @@ pub async fn user_history(
 
 pub async fn name_history(
     State(state): State<AppState>,
-    Path((name,offset)): Path<(String, u32)>,
+    Path((name, offset)): Path<(String, u32)>,
 ) -> Result<Json<NameHistoriesResponse>> {
     let resp = state
         .trading_service
