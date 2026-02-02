@@ -903,17 +903,17 @@ impl TradingService {
             let id = listing.id.clone();
             let time = listing.listed_at;
             let action = match listing.status {
-                ListingStatus::Listed => UserAction::LIST,
+                ListingStatus::Listed => UserAction::List,
                 ListingStatus::BoughtAndRelisted | ListingStatus::BoughtAndDelisted => {
                     if listing.seller_address == user {
-                        UserAction::SELL
+                        UserAction::Sell
                     } else {
-                        UserAction::BUY
+                        UserAction::Buy
                     }
                 }
-                ListingStatus::Relisted => UserAction::LIST,
-                ListingStatus::Delisted => UserAction::DELIST,
-                ListingStatus::List => UserAction::LIST,
+                ListingStatus::Relisted => UserAction::List,
+                ListingStatus::Delisted => UserAction::Delist,
+                ListingStatus::List => UserAction::List,
             }
             .to_string();
             let name = listing.name.clone();

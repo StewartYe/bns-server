@@ -1,5 +1,5 @@
 -- BNS Server Database Schema
--- Generated from migrations 001-009
+-- Generated from migrations 001-017
 -- This file represents the current database schema and can be used to initialize a new database
 
 -- Users table
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- Listings table
--- Status values: listed, bought_and_relisted, bought_and_delisted, relisted, delisted
+-- Status values: list, listed, bought_and_relisted, bought_and_delisted, relisted, delisted
 CREATE TABLE IF NOT EXISTS listings (
     id VARCHAR(36) PRIMARY KEY,
     name VARCHAR(64) NOT NULL,
@@ -21,10 +21,10 @@ CREATE TABLE IF NOT EXISTS listings (
     listed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     previous_price_sats BIGINT,
-    tx_id VARCHAR(64),
+    tx_id VARCHAR(64) NOT NULL,
     buyer_address VARCHAR(100),
     new_price_sats BIGINT,
-    CONSTRAINT listings_name_status_key UNIQUE (name, status)
+    inscription_utxo_sats BIGINT NOT NULL DEFAULT 546
 );
 
 CREATE INDEX IF NOT EXISTS idx_listings_seller ON listings(seller_address);
@@ -67,9 +67,37 @@ CREATE TABLE IF NOT EXISTS pending_txs (
     previous_price_sats BIGINT,
     price_sats BIGINT,
     seller_address VARCHAR(100),
-    buyer_address VARCHAR(100)
+    buyer_address VARCHAR(100),
+    inscription_utxo_sats BIGINT NOT NULL DEFAULT 546
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_txs_created ON pending_txs(created_at);
 CREATE INDEX IF NOT EXISTS idx_pending_txs_status ON pending_txs(status);
 CREATE INDEX IF NOT EXISTS idx_pending_txs_name ON pending_txs(name);
+
+-- Name to pool address mapping table
+-- Caches the relationship between BNS names and their pool addresses
+CREATE TABLE IF NOT EXISTS name_pools (
+    name VARCHAR(255) PRIMARY KEY,
+    pool_address VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_name_pools_pool_address ON name_pools(pool_address);
+
+-- Stars table (user bookmarks for names and collectors)
+CREATE TABLE IF NOT EXISTS stars (
+    id SERIAL PRIMARY KEY,
+    user_address VARCHAR(64) NOT NULL,
+    target VARCHAR(100) NOT NULL,
+    target_type VARCHAR NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT user_target_key UNIQUE (user_address, target)
+);
+
+-- NFT points table (points associated with names)
+CREATE TABLE IF NOT EXISTS nft_points (
+    name VARCHAR(100) PRIMARY KEY NOT NULL,
+    points BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

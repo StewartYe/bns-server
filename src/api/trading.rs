@@ -140,9 +140,15 @@ pub async fn get_listings(
     Ok(Json(response))
 }
 
-/// Get all listed names with pagination
+/// Get listing details for a specific name
 ///
 /// GET /v1/trading/listing/{name}
+///
+/// Returns detailed information about a listing including:
+/// - Current listing info (if listed)
+/// - Last price (previous transaction or initial etching price)
+/// - Pool address
+/// - Fee amount for buying
 pub async fn get_listing(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -151,6 +157,14 @@ pub async fn get_listing(
     Ok(Json(response))
 }
 
+/// Get trading history for the authenticated user
+///
+/// GET /v1/user/trading/history/{offset}
+///
+/// Requires authentication. Returns all trading activities (buy, sell, list, delist)
+/// for the authenticated user with pagination support.
+///
+/// The offset parameter specifies the number of records to skip.
 pub async fn user_history(
     State(state): State<AppState>,
     Extension(session): Extension<UserSession>,
@@ -163,6 +177,14 @@ pub async fn user_history(
     Ok(Json(resp))
 }
 
+/// Get trading history for a specific name
+///
+/// GET /v1/name/trading/history/{name}/{offset}
+///
+/// Returns all completed transactions (bought_and_relisted, bought_and_delisted)
+/// for a specific name with pagination support.
+///
+/// The offset parameter specifies the number of records to skip.
 pub async fn name_history(
     State(state): State<AppState>,
     Path((name, offset)): Path<(String, u32)>,

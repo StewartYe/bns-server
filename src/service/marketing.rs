@@ -1,9 +1,17 @@
+//! Marketing service
+//!
+//! Handles marketing and platform statistics operations:
+//! - Get total users count
+//! - Get listing count and valuation
+//! - Get 24-hour transaction volume and count
+
 use crate::domain::MarketingInfo;
 use crate::error::Result;
 use crate::infra::{DynPostgresClient, DynRedisClient};
 use crate::service::DynUserService;
 use std::sync::Arc;
-/// Trading service
+
+/// Marketing service for platform statistics
 pub struct MarketingService {
     postgres: DynPostgresClient,
     _redis: DynRedisClient,
@@ -23,7 +31,7 @@ impl MarketingService {
         }
     }
 
-    pub async fn get_marking_info(&self) -> Result<MarketingInfo> {
+    pub async fn get_marketing_info(&self) -> Result<MarketingInfo> {
         let (listing_count, valuation) = self.postgres.get_listing_count_and_valuation().await?;
         let user_count = self.postgres.get_user_count().await?;
         let (tx_count, volume) = self.postgres.get_24h_tx_vol().await?;

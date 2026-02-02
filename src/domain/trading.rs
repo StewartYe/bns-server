@@ -52,19 +52,19 @@ impl Display for ListingStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserAction {
-    SELL,
-    BUY,
-    DELIST,
-    LIST,
+    Sell,
+    Buy,
+    Delist,
+    List,
 }
 
 impl Display for UserAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UserAction::SELL => write!(f, "SELL"),
-            UserAction::BUY => write!(f, "BUY"),
-            UserAction::DELIST => write!(f, "DELIST"),
-            UserAction::LIST => write!(f, "LIST"),
+            UserAction::Sell => write!(f, "SELL"),
+            UserAction::Buy => write!(f, "BUY"),
+            UserAction::Delist => write!(f, "DELIST"),
+            UserAction::List => write!(f, "LIST"),
         }
     }
 }

@@ -1,3 +1,11 @@
+//! Star service
+//!
+//! Handles starring/bookmarking operations:
+//! - Star a name or collector address
+//! - Unstar a name or collector
+//! - Get user's starred items
+//! - Validate target type (name or collector address)
+
 use crate::AppError;
 use crate::config::CONFIG;
 use crate::domain::{StarResponse, StarTargetType};
@@ -5,6 +13,7 @@ use crate::infra::{DynBlockchainClient, DynPostgresClient};
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// Star service for managing user bookmarks
 pub struct StarService {
     pub postgres: DynPostgresClient,
     pub blockchain: DynBlockchainClient,
@@ -44,8 +53,8 @@ impl StarService {
     }
 
     pub async fn get_stars(&self, user_address: &str) -> crate::Result<Vec<StarResponse>> {
-        let v = self.postgres.user_stars(user_address).await?;
-        Ok(v.into_iter().map(StarResponse::from).collect())
+        let stars = self.postgres.user_stars(user_address).await?;
+        Ok(stars.into_iter().map(StarResponse::from).collect())
     }
 }
 

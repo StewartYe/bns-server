@@ -300,7 +300,7 @@ impl PostgresClient for PostgresClientImpl {
         let rows = sqlx::query_as!(ListingRow,
             "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
              FROM listings WHERE seller_address=$1 or buyer_address=$2 ORDER BY listed_at DESC LIMIT $3 OFFSET $4",
-            user,user, limit as i64, offset as i64
+            user, user, limit as i64, offset as i64
         )
             .fetch_all(&self.pool)
             .await?;
@@ -733,8 +733,8 @@ impl PostgresClient for PostgresClientImpl {
         Ok(())
     }
     async fn user_stars(&self, user: &str) -> Result<Vec<Star>> {
-        let v = sqlx::query_as!(Star, r#"SELECT id, user_address, target, target_type as "target_type:StarTargetType", created_at from stars where user_address = $1"#, user ).fetch_all(&self.pool).await?;
-        Ok(v)
+        let stars = sqlx::query_as!(Star, r#"SELECT id, user_address, target, target_type as "target_type:StarTargetType", created_at from stars where user_address = $1"#, user ).fetch_all(&self.pool).await?;
+        Ok(stars)
     }
 }
 
