@@ -21,13 +21,12 @@ pub fn parse_psbt(psbt_hex: &str) -> Result<Psbt> {
     Ok(psbt)
 }
 
-pub trait TradingValidator {
+pub trait TradingValidator<T> {
     fn validate_psbt(
         psbt: &Psbt,
-        initiator_address: &str,
         pool_address: &str,
-        name: &str,
         listing: Option<&Listing>,
+        action_params: &T,
     ) -> Result<()>;
 
     fn validate_input0_output0_value(input0: &Input, txin0: &TxIn, output0: &TxOut) -> Result<()> {
@@ -70,12 +69,25 @@ pub trait TradingValidator {
         Ok(())
     }
 
-    fn validate_payto_seller(output1: &TxOut, listing: &Listing) -> Result<()> {
+    fn validate_payto_seller(output1: &TxOut, seller: &str, payment_sats: u64) -> Result<()> {
         let output1_address =
             Address::from_script(&output1.script_pubkey, CONFIG.bitcoin_network())
                 .map_err(|e| BadRequest(format!("Invalid output1 script: {}", e)))?;
-        if output1_address.to_string() != listing.seller_address
-            || output1.value.to_sat() != listing.price_sats
+        if output1_address.to_string() != seller.to_string()
+            || output1.value.to_sat() != payment_sats
+        {
+            return Err(BadRequest(
+                "output1 don't pay to seller or value is incorrect".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_pay_fee(output1: &TxOut, fee_sats: u64) -> Result<()> {
+        let output1_address =
+            Address::from_script(&output1.script_pubkey, CONFIG.bitcoin_network())
+                .map_err(|e| BadRequest(format!("Invalid output1 script: {}", e)))?;
+        if output1_address.to_string() != CONFIG.fee_collector || output1.value.to_sat() != fee_sats
         {
             return Err(BadRequest(
                 "output1 don't pay to seller or value is incorrect".to_owned(),

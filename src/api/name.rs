@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use crate::error::AppError;
+use crate::state::AppState;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -13,9 +15,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-
-use crate::error::AppError;
-use crate::state::AppState;
 
 // ============================================================================
 // Response types

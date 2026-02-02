@@ -10,7 +10,8 @@ use crate::api::rankings::{
 use crate::config::Config;
 use crate::infra::{DynPostgresClient, DynRedisClient, IcAgent};
 use crate::service::{
-    DynAuthService, DynMarketingService, DynNameService, DynTradingService, DynUserService,
+    DynAuthService, DynMarketingService, DynNameService, DynStarService, DynTradingService,
+    DynUserService,
 };
 use tokio::sync::broadcast;
 
@@ -57,6 +58,9 @@ pub struct AppState {
     /// Trading service
     pub trading_service: DynTradingService,
 
+    // Star_service: DynStarService
+    pub star_service: DynStarService,
+
     /// Redis client
     pub redis_client: DynRedisClient,
 
@@ -82,6 +86,7 @@ impl AppState {
         user_service: DynUserService,
         marketing_service: DynMarketingService,
         trading_service: DynTradingService,
+        star_service: DynStarService,
         redis_client: DynRedisClient,
         postgres: DynPostgresClient,
         db_pool: sqlx::PgPool,
@@ -95,6 +100,7 @@ impl AppState {
             user_service,
             marketing_service,
             trading_service,
+            star_service,
             redis_client,
             postgres,
             db_pool,

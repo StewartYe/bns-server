@@ -1,17 +1,16 @@
 use crate::AppError;
-use crate::domain::Listing;
+use crate::domain::{DelistParams, Listing};
 use crate::service::trading_validators::TradingValidator;
 use bitcoin::Psbt;
 
 pub struct DelistValidator;
 
-impl TradingValidator for DelistValidator {
+impl TradingValidator<DelistParams> for DelistValidator {
     fn validate_psbt(
         psbt: &Psbt,
-        _initiator_address: &str,
         pool_address: &str,
-        _name: &str,
         listing: Option<&Listing>,
+        _action_params: &DelistParams,
     ) -> crate::Result<()> {
         let db_listing = listing.ok_or(AppError::BadRequest("Listing not found".to_owned()))?;
         let unsigned_tx = &psbt.unsigned_tx;

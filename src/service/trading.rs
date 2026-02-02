@@ -12,9 +12,10 @@ use crate::api::rankings::NewListingItem;
 use crate::domain::{
     BuyAndDelistParams, BuyAndDelistRequest, BuyAndRelistParams, BuyAndRelistRequest, DelistParams,
     DelistRequest, DelistResponse, GetListingResponse, GetPoolRequest, GetPoolResponse,
-    ListNameParams, ListRequest, ListResponse, ListingHistoriesResponse, ListingHistory,
-    ListingInfo, ListingPriceRangeResponse, ListingStatus, ListingsResponse, PendingTx,
-    PendingTxAction, PendingTxStatus, RelistRequest, RelistResponse, UserAction,
+    ListNameParams, ListRequest, ListResponse, ListingHistory, ListingInfo,
+    ListingPriceRangeResponse, ListingStatus, ListingsResponse, NameDealHistory,
+    NameHistoriesResponse, PendingTx, PendingTxAction, PendingTxStatus, RelistRequest,
+    RelistResponse, UserAction, UserHistoriesResponse,
 };
 use crate::error::{AppError, Result};
 use crate::infra::orchestrator_canister::InvokeArgs;
@@ -27,6 +28,7 @@ use crate::service::trading_validators::{TradingValidator, parse_psbt};
 use crate::service::{EventService, UserService};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::cmp::max;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -211,14 +213,16 @@ impl TradingService {
                 AppError::BadRequest(format!("Listing for '{}' not found", params.name))
             })?;
 
+        //verify action_parmas:
+        let fee_sats = max(330, db_listing.price_sats * 2 / 100);
+        if fee_sats != params.fee_sats || params.payment_sats != db_listing.price_sats - fee_sats {
+            return Err(AppError::BadRequest(
+                "fee_sats + payment_sats != price_sats".to_string(),
+            ));
+        }
+
         // === Step 8: PSBT Validation ===
-        BuyAndRelistValidator::validate_psbt(
-            &psbt,
-            &request.intention_set.initiator_address,
-            &db_pool_address,
-            &params.name,
-            Some(&db_listing),
-        )?;
+        BuyAndRelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
 
         // === Step 9: Inscription Validation ===
         let prev_out = &psbt.unsigned_tx.input[0].previous_output;
@@ -419,14 +423,16 @@ impl TradingService {
                 AppError::BadRequest(format!("Listing for '{}' not found", params.name))
             })?;
 
+        //verify action_parmas:
+        let fee_sats = max(330, db_listing.price_sats * 2 / 100);
+        if fee_sats != params.fee_sats || params.payment_sats != db_listing.price_sats - fee_sats {
+            return Err(AppError::BadRequest(
+                "fee_sats + payment_sats != price_sats".to_string(),
+            ));
+        }
+
         // === Step 8: PSBT Validation ===
-        BuyAndDelistValidator::validate_psbt(
-            &psbt,
-            &request.intention_set.initiator_address,
-            &db_pool_address,
-            &params.name,
-            Some(&db_listing),
-        )?;
+        BuyAndDelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
 
         // === Step 9: Inscription Validation ===
         let prev_out = &psbt.unsigned_tx.input[0].previous_output;
@@ -564,13 +570,7 @@ impl TradingService {
         }
 
         // === Step 8: PSBT Validation ===
-        DelistValidator::validate_psbt(
-            &psbt,
-            &request.intention_set.initiator_address,
-            &db_pool_address,
-            &params.name,
-            Some(&db_listing),
-        )?;
+        DelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
 
         // === Step 9: Inscription Validation ===
         let prev_out = &psbt.unsigned_tx.input[0].previous_output;
@@ -709,13 +709,7 @@ impl TradingService {
         }
 
         // === Step 8: PSBT Validation ===
-        ListValidator::validate_psbt(
-            &psbt,
-            &request.intention_set.initiator_address,
-            &db_pool_address,
-            &params.name,
-            None,
-        )?;
+        ListValidator::validate_psbt(&psbt, &db_pool_address, None, &params)?;
 
         // === Step 9: Inscription Validation ===
         let prev_out = &psbt.unsigned_tx.input[0].previous_output;
@@ -811,10 +805,17 @@ impl TradingService {
             .map(|l| ListingInfo::from(l));
         let pool = self.postgres.get_pool_address(name).await?;
         let price = self.calculate_previous_price(&name).await;
+        let fee_sats = if listing.is_some() {
+            let fee = max(330, listing.clone().unwrap().price_sats * 2 / 100);
+            Some(fee)
+        } else {
+            None
+        };
         Ok(GetListingResponse {
             listing,
             last_price_sat: price.unwrap_or(GLOBAL_MIN_PRICE),
             pool_address: pool,
+            fee_sats,
         })
     }
 
@@ -854,17 +855,40 @@ impl TradingService {
         })
     }
 
-    // ========================================================================
-    // Get Listings
-    // ========================================================================
+    pub async fn get_name_history(
+        &self,
+        name: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<NameHistoriesResponse> {
+        let limit = limit.unwrap_or(20).min(50);
+        let offset = offset.unwrap_or(0);
 
-    /// Get all listed names with pagination
+        let (listings, total) = self.postgres.get_name_history(name, limit, offset).await?;
+        let mut histories = vec![];
+        for listing in listings {
+            let history = NameDealHistory {
+                seller_address: listing.seller_address,
+                buyer_address: listing.buyer_address.unwrap_or_default(),
+                price_sats: listing.price_sats,
+                time: listing.updated_at,
+            };
+            histories.push(history);
+        }
+        Ok(NameHistoriesResponse {
+            listings: histories,
+            total,
+        })
+    }
+    // ========================================================================
+    // Get user history
+    // ========================================================================
     pub async fn get_user_history(
         &self,
         user: &str,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<ListingHistoriesResponse> {
+    ) -> Result<UserHistoriesResponse> {
         let limit = limit.unwrap_or(20).min(50);
         let offset = offset.unwrap_or(0);
 
@@ -889,6 +913,7 @@ impl TradingService {
                 }
                 ListingStatus::Relisted => UserAction::LIST,
                 ListingStatus::Delisted => UserAction::DELIST,
+                ListingStatus::List => UserAction::LIST,
             }
             .to_string();
             let name = listing.name.clone();
@@ -915,7 +940,7 @@ impl TradingService {
                 status: status.to_string(),
             });
         }
-        Ok(ListingHistoriesResponse {
+        Ok(UserHistoriesResponse {
             listings: histories,
             total,
         })

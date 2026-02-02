@@ -1,17 +1,16 @@
 use crate::AppError;
-use crate::domain::Listing;
+use crate::domain::{BuyAndDelistParams, Listing};
 use crate::service::trading_validators::TradingValidator;
 use bitcoin::Psbt;
 
 pub struct BuyAndDelistValidator;
 
-impl TradingValidator for BuyAndDelistValidator {
+impl TradingValidator<BuyAndDelistParams> for BuyAndDelistValidator {
     fn validate_psbt(
         psbt: &Psbt,
-        initiator_address: &str,
         pool_address: &str,
-        _name: &str,
         listing: Option<&Listing>,
+        action_params: &BuyAndDelistParams,
     ) -> crate::Result<()> {
         let db_listing = listing.ok_or(AppError::BadRequest("Listing not found".to_owned()))?;
         let unsigned_tx = &psbt.unsigned_tx;
@@ -38,14 +37,19 @@ impl TradingValidator for BuyAndDelistValidator {
         // Verify outputs[0] goes to initiator_address (buyer)
         let output0 = &unsigned_tx.output[0];
         //Validate output0 address
-        Self::validate_output0_address(output0, initiator_address)?;
+        Self::validate_output0_address(output0, action_params.buyer_address.as_str())?;
         //Validate input0.value = output0.value
         Self::validate_input0_output0_value(&psbt.inputs[0], &unsigned_tx.input[0], output0)?;
         //Validate input0 is the listing's outpoint
         Self::validate_input0_utxo(&unsigned_tx.input[0], db_listing)?;
         //check pay to seller
-        Self::validate_payto_seller(&unsigned_tx.output[1], db_listing)?;
-
+        Self::validate_payto_seller(
+            &unsigned_tx.output[1],
+            db_listing.seller_address.as_str(),
+            action_params.payment_sats,
+        )?;
+        //check pay fee
+        Self::validate_pay_fee(&unsigned_tx.output[2], action_params.fee_sats)?;
         let expected_outpoint = format!("{}:0", db_listing.tx_id);
         tracing::debug!(
             "PSBT validation passed: {} inputs, {} outputs, all signed, output[0]={} sats to {}, input[0]={}",

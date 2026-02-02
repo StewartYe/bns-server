@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, user_address, target, target_type as \"target_type:StarTargetType\", created_at from stars where user_address = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "target",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "target_type:StarTargetType",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ea44025a4698dc9058cd3a566d7bb28c881b923b06a0a40ff8c81a7eedc4a45e"
+}

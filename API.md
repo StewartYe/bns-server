@@ -779,8 +779,9 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/lis
     "txId": "a1b2c3d4e5f6...",
     "inscription_utxo_sats": 10000
   }or Null,
-  "pool_address": "tb1qcxx......"or null,
-  "last_price_sats": 11111
+  "poolAddress": "tb1qcxx......"or null,
+  "lastPriceSats": 11111,
+  "feeSats": 2000
 }
 ```
 

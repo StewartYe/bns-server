@@ -91,6 +91,8 @@ pub struct Config {
 
     /// Session TTL in seconds
     pub session_ttl_secs: i64,
+
+    pub fee_collector: String,
 }
 
 impl Config {
@@ -130,6 +132,8 @@ impl Config {
         let orchestrator_canister_id = env::var("ORCHESTRATOR_CANISTER_ID")
             .map_err(|_| ConfigError::Missing("ORCHESTRATOR_CANISTER_ID"))?;
 
+        let fee_collector =
+            env::var("FEE_COLLECTOR").map_err(|_| ConfigError::Missing("FEE_COLLECTOR"))?;
         let ic = IcConfig {
             identity_pem: ic_identity_pem,
             bns_canister_id,
@@ -160,6 +164,8 @@ impl Config {
                 .unwrap_or_else(|_| "86400".to_string()) // 24 hours
                 .parse()
                 .unwrap_or(86400),
+
+            fee_collector,
         })
     }
 
