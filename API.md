@@ -20,8 +20,13 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
   - [Relist](#relist)
   - [Delist](#delist)
   - [Get All Listings](#get-all-listings)
-  - [user listing history](#user-listing-history)
+  - [User listing history](#user-listing-history)
+  - [Name deal history](#name-deal-history)
   - [get listing](#get-listing)
+- [Star Name And Collector](#star-name-and-collector)
+  - [Star](#star)
+  - [Unstar](#unstar)
+  - [Get stars](#get-stars)
 - [User Settings](#user-settings)
   - [Get Inventory](#get-inventory)
   - [Set Primary Name](#set-primary-name)
@@ -498,6 +503,7 @@ Buy a listed name and immediately relist it at a new price.
 | `buyer_address` | string | Buyer's Bitcoin address |
 | `buyer_token_address` | string? | Optional token receiving address |
 | `new_price` | number | New listing price in satoshis |
+|`fee_sats` | number| the fee pay to platform|
 
 **Example:**
 
@@ -513,7 +519,7 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trad
         "exchangeId": "BNS_Canister",
         "poolAddress": "bc1q...",
         "nonce": 1,
-        "actionParams": "{\"name\":\"MY•RUNE•NAME\",\"payment_sats\":100000,\"buyer_address\":\"tb1q...\",\"new_price\":150000}",
+        "actionParams": "{\"name\":\"MY•RUNE•NAME\",\"payment_sats\":100000,\"buyer_address\":\"tb1q...\",\"new_price\":150000, \"fee_sats\":1111}",
         "inputCoins": [],
         "outputCoins": [],
         "poolUtxoSpent": [],
@@ -533,7 +539,7 @@ curl -X POST https://bns-server-testnet-219952077564.us-central1.run.app/v1/trad
   "txId": "a1b2c3d4e5f6...",
   "name": "MY•RUNE•NAME",
   "priceSats": 150000,
-  "sellerAddress": "tb1q..."
+  "sellerAddress": "tb1q...",
 }
 ```
 
@@ -557,7 +563,7 @@ Same structure as [Buy and Relist](#buy-and-relist).
 | `payment_sats` | number | Payment amount in satoshis |
 | `buyer_address` | string | Buyer's Bitcoin address |
 | `buyer_token_address` | string? | Optional token receiving address |
-| `new_price` | number | Price paid (for validation) |
+|`fee_sats` | number| the fee pay to platform|
 
 **Response:**
 
@@ -685,15 +691,38 @@ Get user's listing history
 }
 ```
 
-Submitted,
-/// Canister has started processing
-Pending,
-/// Transaction finalized in mempool
-Finalized,
-/// Transaction confirmed on chain
-Confirmed,
-/// Transaction rejected
-Rejected,
+
+### name deal history
+
+Get a name's deal history
+
+**Endpoint:** `POST /v1/name/trading/history/{name}/{offset}`
+
+**Authentication:** Required (Bearer token or session cookie)
+
+**Request Body:** None
+
+**Path Parameters:**
+
+| Field    | Type | Description                                   |
+|----------|------|-----------------------------------------------|
+| `name`   |String| a NFT's name                                  |
+| `offset` | int  | the offset for pagable query, 0 is first page |
+
+**Response:**
+
+```json
+{
+  "listings": [{
+    "seller_address": "bc032032kes.....",
+    "buyer_address": "bcq32o4o34o34......",
+    "priceSats": 10000,
+    "time": "2025-12-25T15:24:54.805664Z"
+  }],
+  "total": 100
+}
+```
+
 
 ### Get All Listings
 
@@ -792,6 +821,67 @@ curl "https://bns-server-testnet-219952077564.us-central1.run.app/v1/trading/lis
 | `listed` | Currently listed and available for purchase |
 
 
+---
+## Star Name And Collector
+
+### star
+
+Star a name or collector.
+
+**Endpoint:** `PUT /v1/star/{target}`
+
+**Authentication:** Session cookie or Bearer token
+
+**Example (with Bearer token):**
+
+```bash
+curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/star/RUNESE \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
+```
+
+**Response** None
+
+### unstar
+
+Unstar a name or collector.
+
+**Endpoint:** `DELETE /v1/star/{target}`
+
+**Authentication:** Session cookie or Bearer token
+
+**Example (with Bearer token):**
+
+```bash
+curl -X DELETE https://bns-server-testnet-219952077564.us-central1.run.app/v1/star/RUNESE \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
+```
+
+**Response** None
+
+
+### get stars
+
+get all of the names or collectors you stared.
+
+**Endpoint:** `GET /v1/user/stars`
+
+**Authentication:** Session cookie or Bearer token
+
+**Example (with Bearer token):**
+
+```bash
+curl -X GET https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/stars \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
+```
+
+**Example of response:**
+```json
+[{
+  "name": "MY•RUNE•NAME",
+  "user_address": "bc1q...",
+  "target_type": "name"
+}]
+```
 ---
 
 ## User Settings

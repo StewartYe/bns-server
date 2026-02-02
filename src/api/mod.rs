@@ -58,8 +58,8 @@ pub fn build_router(state: AppState) -> Router {
             "/user/names/{name}/metadata",
             put(user::update_name_metadata),
         )
-        .route("/names/star/{name}", put(star::star))
-        .route("/names/star/{name}", delete(star::unstar))
+        .route("/star/{target}", put(star::star))
+        .route("/star/{target}", delete(star::unstar))
         .route("/user/stars", get(star::get_stars))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -78,7 +78,7 @@ pub fn build_router(state: AppState) -> Router {
         // Public trading endpoints
         .route("/trading/listings", get(trading::get_listings))
         .route("/trading/listing/{name}", get(trading::get_listing))
-        .route("/name/trading/history/{offset}", get(name_history))
+        .route("/name/trading/history/{name}/{offset}", get(name_history))
         .route("/marketing", get(marketing::marketing_info))
         // Rankings endpoints
         .route("/rankings/{type}", get(rankings::get_ranking))

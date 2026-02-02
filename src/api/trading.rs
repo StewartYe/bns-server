@@ -165,12 +165,12 @@ pub async fn user_history(
 
 pub async fn name_history(
     State(state): State<AppState>,
-    Extension(session): Extension<UserSession>,
+    Path(name): Path<String>,
     Path(offset): Path<u32>,
 ) -> Result<Json<NameHistoriesResponse>> {
     let resp = state
         .trading_service
-        .get_name_history(&session.btc_address, None, Some(offset))
+        .get_name_history(name.as_str(), None, Some(offset))
         .await?;
     Ok(Json(resp))
 }
