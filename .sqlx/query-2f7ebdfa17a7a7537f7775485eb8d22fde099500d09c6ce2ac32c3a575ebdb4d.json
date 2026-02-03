@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats FROM pending_txs WHERE tx_id = $1",
+  "query": "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats, platform_fee FROM pending_txs WHERE tx_id = $1",
   "describe": {
     "columns": [
       {
@@ -52,6 +52,11 @@
         "ordinal": 9,
         "name": "inscription_utxo_sats",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "platform_fee",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -69,8 +74,9 @@
       true,
       true,
       true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "c0a5ff7aafb29adce0b541fd2159c4a41bbf351b83eb5c6bc96594aaa0449c34"
+  "hash": "2f7ebdfa17a7a7537f7775485eb8d22fde099500d09c6ce2ac32c3a575ebdb4d"
 }

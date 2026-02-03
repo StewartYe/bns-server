@@ -12,10 +12,9 @@ use crate::api::rankings::NewListingItem;
 use crate::domain::{
     BuyAndDelistParams, BuyAndDelistRequest, BuyAndRelistParams, BuyAndRelistRequest, DelistParams,
     DelistRequest, DelistResponse, GetListingResponse, GetPoolRequest, GetPoolResponse,
-    ListNameParams, ListRequest, ListResponse, ListingHistory, ListingInfo,
-    ListingPriceRangeResponse, ListingStatus, ListingsResponse, NameDealHistory,
-    NameHistoriesResponse, PendingTx, PendingTxAction, PendingTxStatus, RelistRequest,
-    RelistResponse, UserAction, UserHistoriesResponse,
+    ListNameParams, ListRequest, ListResponse, Listing, ListingHistory, ListingInfo, ListingStatus,
+    ListingsResponse, NameDealHistory, NameHistoriesResponse, PendingTx, PendingTxAction,
+    PendingTxStatus, RelistRequest, RelistResponse, UserAction, UserHistoriesResponse, UserSession,
 };
 use crate::error::{AppError, Result};
 use crate::infra::orchestrator_canister::InvokeArgs;
@@ -28,7 +27,6 @@ use crate::service::trading_validators::{TradingValidator, parse_psbt};
 use crate::service::{EventService, UserService};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::cmp::max;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -214,7 +212,9 @@ impl TradingService {
             })?;
 
         //verify action_parmas:
-        let fee_sats = max(330, db_listing.price_sats * 2 / 100);
+        let fee_sats = self
+            .calculate_platform_fee(&db_listing, &params.buyer_address)
+            .await?;
         if fee_sats != params.fee_sats || params.payment_sats != db_listing.price_sats - fee_sats {
             return Err(AppError::BadRequest(
                 "fee_sats + payment_sats != price_sats".to_string(),
@@ -231,8 +231,7 @@ impl TradingService {
             .await?;
 
         // === Step 10: Price Validation ===
-        self.validate_price(params.name.as_str(), params.new_price)
-            .await?;
+        self.validate_price(db_listing.price_sats, params.new_price)?;
 
         tracing::debug!(
             "Pool address {} verified for name '{}'",
@@ -266,11 +265,12 @@ impl TradingService {
             name: params.name.clone(),
             action: PendingTxAction::BuyAndRelist,
             status: PendingTxStatus::Submitted,
-            previous_price_sats: None,
+            previous_price_sats: Some(db_listing.price_sats),
             price_sats: Some(params.new_price),
             seller_address: Some(db_listing.seller_address),
             buyer_address: Some(params.buyer_address.clone()),
             inscription_utxo_sats: output0_value,
+            platform_fee: Some(fee_sats),
         };
 
         if let Err(e) = self.postgres.add_pending_tx(&pending_tx).await {
@@ -307,8 +307,8 @@ impl TradingService {
                 &request.name
             )));
         }
-        self.validate_price(request.name.as_str(), request.new_price)
-            .await?;
+        let previous_price_sats = old_listing.previous_price_sats;
+        self.validate_price(previous_price_sats, request.new_price)?;
 
         // Call canister to relist
         self.ic_agent
@@ -332,7 +332,7 @@ impl TradingService {
                 status: crate::domain::ListingStatus::Listed,
                 listed_at: now,
                 updated_at: now,
-                previous_price_sats: old_listing.price_sats,
+                previous_price_sats: old_listing.previous_price_sats,
                 tx_id: old_listing.tx_id.clone(),
                 buyer_address: None,
                 new_price_sats: None,
@@ -424,7 +424,9 @@ impl TradingService {
             })?;
 
         //verify action_parmas:
-        let fee_sats = max(330, db_listing.price_sats * 2 / 100);
+        let fee_sats = self
+            .calculate_platform_fee(&db_listing, &params.buyer_address)
+            .await?;
         if fee_sats != params.fee_sats || params.payment_sats != db_listing.price_sats - fee_sats {
             return Err(AppError::BadRequest(
                 "fee_sats + payment_sats != price_sats".to_string(),
@@ -483,6 +485,7 @@ impl TradingService {
                 &psbt.unsigned_tx.input[0],
             )
             .unwrap_or_default(),
+            platform_fee: Some(fee_sats),
         };
 
         if let Err(e) = self.postgres.add_pending_tx(&pending_tx).await {
@@ -615,6 +618,7 @@ impl TradingService {
                 &psbt.unsigned_tx.input[0],
             )
             .unwrap_or_default(),
+            platform_fee: None,
         };
 
         if let Err(e) = self.postgres.add_pending_tx(&pending_tx).await {
@@ -710,7 +714,6 @@ impl TradingService {
 
         // === Step 8: PSBT Validation ===
         ListValidator::validate_psbt(&psbt, &db_pool_address, None, &params)?;
-
         // === Step 9: Inscription Validation ===
         let prev_out = &psbt.unsigned_tx.input[0].previous_output;
         let input0_outpoint = format!("{}:{}", prev_out.txid, prev_out.vout);
@@ -718,8 +721,13 @@ impl TradingService {
             .await?;
 
         // === Step 10: Price Validation ===
-        self.validate_price(params.name.as_str(), params.price)
-            .await?;
+        let previous_price_sats = self
+            .calculate_previous_price(params.name.as_str())
+            .await
+            .ok_or(AppError::Internal(
+                "Failed to calculate previous price".to_string(),
+            ))?;
+        self.validate_price(previous_price_sats, params.price)?;
 
         tracing::debug!(
             "Pool address {} verified for name '{}'",
@@ -727,7 +735,6 @@ impl TradingService {
             params.name
         );
 
-        let previous_price_sats = self.calculate_previous_price(params.name.as_str()).await;
         // Build InvokeArgs
         let invoke_args = InvokeArgs {
             client_info: None,
@@ -751,11 +758,12 @@ impl TradingService {
             name: params.name.clone(),
             action: PendingTxAction::List,
             status: PendingTxStatus::Submitted,
-            previous_price_sats,
+            previous_price_sats: Some(previous_price_sats),
             price_sats: Some(params.price),
             seller_address: Some(params.seller_address.clone()),
             buyer_address: None,
             inscription_utxo_sats: output0_value,
+            platform_fee: None,
         };
 
         if let Err(e) = self.postgres.add_pending_tx(&pending_tx).await {
@@ -797,37 +805,28 @@ impl TradingService {
         }
     }
 
-    pub async fn get_listing(&self, name: &str) -> Result<GetListingResponse> {
-        let listing = self
-            .postgres
-            .get_listed_listing_by_name(&name)
-            .await?
-            .map(|l| ListingInfo::from(l));
+    pub async fn get_listing(
+        &self,
+        name: &str,
+        session: &UserSession,
+    ) -> Result<GetListingResponse> {
+        let listing = self.postgres.get_listed_listing_by_name(&name).await?;
+        let listing_info = listing.clone().map(|l| ListingInfo::from(l));
         let pool = self.postgres.get_pool_address(name).await?;
         let price = self.calculate_previous_price(&name).await;
         let fee_sats = if listing.is_some() {
-            let fee = max(330, listing.clone().unwrap().price_sats * 2 / 100);
+            let fee = self
+                .calculate_platform_fee(&listing.unwrap(), session.btc_address.as_str())
+                .await?;
             Some(fee)
         } else {
             None
         };
         Ok(GetListingResponse {
-            listing,
+            listing: listing_info,
             last_price_sat: price.unwrap_or(GLOBAL_MIN_PRICE),
             pool_address: pool,
             fee_sats,
-        })
-    }
-
-    pub async fn name_price_range(&self, name: &str) -> Result<ListingPriceRangeResponse> {
-        let previous_price_sats = self
-            .calculate_previous_price(name)
-            .await
-            .unwrap_or(GLOBAL_MIN_PRICE);
-        let max = previous_price_sats * 126 / 100;
-        Ok(ListingPriceRangeResponse {
-            min: GLOBAL_MIN_PRICE.max(max / 100),
-            max,
         })
     }
 
@@ -998,15 +997,70 @@ impl TradingService {
     }
 
     /// Validate listing price is within acceptable range
-    async fn validate_price(&self, name: &str, price: u64) -> Result<()> {
-        let price_range = self.name_price_range(name).await?;
-        if price < price_range.min || price > price_range.max {
+    fn validate_price(&self, base_price: u64, new_price: u64) -> Result<()> {
+        let max = base_price * 126 / 100;
+        let min = GLOBAL_MIN_PRICE.max(max / 100);
+        if new_price < min || new_price > max {
             return Err(AppError::BadRequest(format!(
                 "Price {} sats isn't between {} and {} sats",
-                price, price_range.min, price_range.max
+                new_price, min, max
             )));
         }
         Ok(())
+    }
+
+    async fn calculate_platform_fee(&self, listing: &Listing, buyer: &str) -> Result<u64> {
+        let mut seller_level = 0u64;
+        if let Some(seller_primary_name) = self
+            .postgres
+            .get_user(listing.seller_address.as_str())
+            .await?
+            .unwrap()
+            .primary_name
+        {
+            let points = self
+                .postgres
+                .get_nft_points(seller_primary_name.as_str())
+                .await?;
+            let points = if points.is_some() {
+                points.unwrap().points
+            } else {
+                0
+            };
+            seller_level = Self::points_to_level(points as u64);
+        }
+        let mut buyer_level = 0u64;
+        if let Some(buyer_primary_name) = self.postgres.get_user(buyer).await?.unwrap().primary_name
+        {
+            let points = self
+                .postgres
+                .get_nft_points(buyer_primary_name.as_str())
+                .await?;
+            let points = if points.is_some() {
+                points.unwrap().points
+            } else {
+                0
+            };
+            buyer_level = Self::points_to_level(points as u64);
+        }
+        let fee = 330.max(listing.price_sats * (20u64 - seller_level - buyer_level) / 1000);
+        Ok(fee)
+    }
+
+    fn points_to_level(points: u64) -> u64 {
+        if points < 50_000 {
+            0
+        } else if points < 500_000 {
+            1
+        } else if points < 5_000_000 {
+            2
+        } else if points < 50_000_000 {
+            3
+        } else if points < 500_000_000 {
+            4
+        } else {
+            5
+        }
     }
 }
 

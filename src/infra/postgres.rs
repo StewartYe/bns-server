@@ -7,8 +7,8 @@
 
 use crate::AppError;
 use crate::domain::{
-    Listing, ListingStatus, NameMetadata, PendingTx, PendingTxAction, PendingTxStatus, Star,
-    StarTargetType, User,
+    Listing, ListingStatus, NameMetadata, NftPoints, PendingTx, PendingTxAction, PendingTxStatus,
+    Star, StarTargetType, User,
 };
 use crate::error::Result;
 use async_trait::async_trait;
@@ -104,6 +104,8 @@ pub trait PostgresClient: Send + Sync {
     async fn star(&self, user: &str, name: &str, target_type: StarTargetType) -> Result<()>;
     async fn unstar(&self, user: &str, name: &str) -> Result<()>;
     async fn user_stars(&self, user: &str) -> Result<Vec<Star>>;
+    async fn add_nft_points(&self, nft: &str, points: i64) -> Result<()>;
+    async fn get_nft_points(&self, nft: &str) -> Result<Option<NftPoints>>;
 }
 
 /// PostgreSQL client implementation
@@ -171,6 +173,7 @@ struct PendingTxRow {
     seller_address: Option<String>,
     buyer_address: Option<String>,
     inscription_utxo_sats: i64,
+    platform_fee: Option<i64>,
 }
 
 impl From<PendingTxRow> for PendingTx {
@@ -186,6 +189,7 @@ impl From<PendingTxRow> for PendingTx {
             seller_address: row.seller_address,
             buyer_address: row.buyer_address,
             inscription_utxo_sats: row.inscription_utxo_sats as u64,
+            platform_fee: row.platform_fee.map(|p| p as u64),
         }
     }
 }
@@ -514,8 +518,8 @@ impl PostgresClient for PostgresClientImpl {
     async fn add_pending_tx(&self, pending_tx: &PendingTx) -> Result<()> {
         sqlx::query!(
             r#"
-            INSERT INTO pending_txs (tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO pending_txs (tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats, platform_fee)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (tx_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 action = EXCLUDED.action,
@@ -524,7 +528,8 @@ impl PostgresClient for PostgresClientImpl {
                 price_sats = EXCLUDED.price_sats,
                 seller_address = EXCLUDED.seller_address,
                 buyer_address = EXCLUDED.buyer_address,
-                inscription_utxo_sats = EXCLUDED.inscription_utxo_sats
+                inscription_utxo_sats = EXCLUDED.inscription_utxo_sats,
+                platform_fee = EXCLUDED.platform_fee
             "#,
             pending_tx.tx_id,
             pending_tx.created_at,
@@ -535,7 +540,8 @@ impl PostgresClient for PostgresClientImpl {
             pending_tx.price_sats.map(|p| p as i64),
             pending_tx.seller_address,
             pending_tx.buyer_address,
-            pending_tx.inscription_utxo_sats as i64
+            pending_tx.inscription_utxo_sats as i64,
+            pending_tx.platform_fee.map(|p| p as i64)
         )
         .execute(&self.pool)
         .await?;
@@ -546,7 +552,7 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn get_pending_txs(&self) -> Result<Vec<PendingTx>> {
         let rows = sqlx::query_as!(PendingTxRow,
-            "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats FROM  pending_txs WHERE status IN ('submitted', 'pending') ORDER BY created_at"
+            "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats, platform_fee FROM  pending_txs WHERE status IN ('submitted', 'pending') ORDER BY created_at"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -556,7 +562,7 @@ impl PostgresClient for PostgresClientImpl {
 
     async fn get_pending_tx_by_id(&self, tx_id: &str) -> Result<Option<PendingTx>> {
         let row = sqlx::query_as!(PendingTxRow,
-            "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats FROM pending_txs WHERE tx_id = $1",
+            "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats, platform_fee FROM pending_txs WHERE tx_id = $1",
             tx_id
         )
         .fetch_optional(&self.pool)
@@ -573,7 +579,7 @@ impl PostgresClient for PostgresClientImpl {
         let row = sqlx::query_as!(crate::infra::postgres::PendingTxRow,
             r#"
             UPDATE pending_txs SET status = $1 WHERE tx_id = $2
-            RETURNING tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats
+            RETURNING tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats,platform_fee
             "#,
             status.to_string(), tx_id
         )
@@ -735,6 +741,19 @@ impl PostgresClient for PostgresClientImpl {
     async fn user_stars(&self, user: &str) -> Result<Vec<Star>> {
         let stars = sqlx::query_as!(Star, r#"SELECT id, user_address, target, target_type as "target_type:StarTargetType", created_at from stars where user_address = $1"#, user ).fetch_all(&self.pool).await?;
         Ok(stars)
+    }
+
+    async fn add_nft_points(&self, nft: &str, points: i64) -> Result<()> {
+        sqlx::query!("INSERT INTO nft_points(name, points) VALUES ($1, $2) ON CONFLICT(name) DO UPDATE SET points = nft_points.points + $2",
+            nft.to_string(), points
+        ).execute(&self.pool).await?;
+        Ok(())
+    }
+    async fn get_nft_points(&self, nft: &str) -> Result<Option<NftPoints>> {
+        sqlx::query_as!(NftPoints, "select * from nft_points where name=$1", nft)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| AppError::Database(e))
     }
 }
 

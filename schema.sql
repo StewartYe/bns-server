@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS pending_txs (
     price_sats BIGINT,
     seller_address VARCHAR(100),
     buyer_address VARCHAR(100),
-    inscription_utxo_sats BIGINT NOT NULL DEFAULT 546
+    inscription_utxo_sats BIGINT NOT NULL DEFAULT 546,
+    platform_fee BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_txs_created ON pending_txs(created_at);

@@ -34,5 +34,5 @@ pub use config::Config;
 pub use error::{AppError, Result};
 pub use state::AppState;
 
-pub const GLOBAL_MIN_PRICE: u64 = 330;
+pub const GLOBAL_MIN_PRICE: u64 = 55_000;
 pub const INIT_MAX_PRICE: u64 = 100_000;

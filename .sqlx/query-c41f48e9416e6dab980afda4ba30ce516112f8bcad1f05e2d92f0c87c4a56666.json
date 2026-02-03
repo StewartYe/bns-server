@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            UPDATE pending_txs SET status = $1 WHERE tx_id = $2\n            RETURNING tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats\n            ",
+  "query": "SELECT tx_id, created_at, name, action, status, previous_price_sats, price_sats, seller_address, buyer_address, inscription_utxo_sats, platform_fee FROM  pending_txs WHERE status IN ('submitted', 'pending') ORDER BY created_at",
   "describe": {
     "columns": [
       {
@@ -52,13 +52,15 @@
         "ordinal": 9,
         "name": "inscription_utxo_sats",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "platform_fee",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
-      "Left": [
-        "Varchar",
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -70,8 +72,9 @@
       true,
       true,
       true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "26a84e389ff642d504f4ce9b48e3bc45913a95172bb6906af4c94a4850f49dae"
+  "hash": "c41f48e9416e6dab980afda4ba30ce516112f8bcad1f05e2d92f0c87c4a56666"
 }
