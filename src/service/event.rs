@@ -296,7 +296,7 @@ impl EventService {
 
         // Create new listed record
         let now = Utc::now();
-        let listing = Listing {
+        let new_listing = Listing {
             id: Uuid::new_v4().to_string(),
             name: name.clone(),
             seller_address: buyer_address,
@@ -311,7 +311,7 @@ impl EventService {
             inscription_utxo_sats: pending_tx.inscription_utxo_sats,
         };
 
-        if let Err(e) = self.postgres.create_listing(&listing).await {
+        if let Err(e) = self.postgres.create_listing(&new_listing).await {
             tracing::error!("Failed to save listing for {}: {:?}", name, e);
         } else {
             tracing::info!(
@@ -321,8 +321,44 @@ impl EventService {
             );
         }
 
+        //add points to seller's  primary key
+        self.add_seller_points(&pending_tx).await;
+
         // Update listing rankings for the new listing
-        self.update_listing_rankings(&listing).await;
+        self.update_listing_rankings(&new_listing).await;
+    }
+
+    //add points to seller's  primary name, if No primary name bound, do nothing.
+    pub async fn add_seller_points(&self, pending_tx: &PendingTx) {
+        if let Some(points) = pending_tx.platform_fee {
+            let seller = self
+                .postgres
+                .get_user(
+                    pending_tx
+                        .seller_address
+                        .clone()
+                        .unwrap_or_default()
+                        .as_str(),
+                )
+                .await;
+            match seller {
+                Ok(Some(seller)) => {
+                    if let Some(primary_name) = seller.primary_name {
+                        let result = self
+                            .postgres
+                            .add_nft_points(primary_name.as_str(), points as i64)
+                            .await;
+                        tracing::info!("add nft_points for seller: {:?}", result);
+                    }
+                }
+                Ok(None) => {
+                    tracing::error!("User not found: {:?}", pending_tx.seller_address);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to retrieve seller address: {:?}", e);
+                }
+            }
+        }
     }
 
     /// Update sale rankings: recent_sales, most_traded, top_earners
@@ -508,6 +544,9 @@ impl EventService {
 
             // Remove from listing rankings: new_listings, top_sales, best_deals
             self.remove_listing_rankings(name).await;
+
+            //add points to seller's  primary key
+            self.add_seller_points(&pending_tx).await;
         }
     }
 

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO nft_points(name, points) VALUES ($1, $2) ON CONFLICT(name) DO UPDATE SET points = nft_points.points + $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4b855ff65d2caaeb6f48139c6f604b089e306eef94de3e9b1f418f19f2cc29bc"
+}

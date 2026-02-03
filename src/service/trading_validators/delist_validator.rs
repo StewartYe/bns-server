@@ -14,15 +14,6 @@ impl TradingValidator<DelistParams> for DelistValidator {
     ) -> crate::Result<()> {
         let db_listing = listing.ok_or(AppError::BadRequest("Listing not found".to_owned()))?;
         let unsigned_tx = &psbt.unsigned_tx;
-
-        // Verify outputs count >= 2
-        if unsigned_tx.output.len() < 2 {
-            return Err(AppError::BadRequest(format!(
-                "PSBT must have exactly 2 more outputs, got {}",
-                unsigned_tx.output.len()
-            )));
-        }
-
         // Verify all inputs are signed (except input 0)
         for (i, input) in psbt.inputs.iter().enumerate() {
             if i == 0 {

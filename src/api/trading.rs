@@ -151,9 +151,13 @@ pub async fn get_listings(
 /// - Fee amount for buying
 pub async fn get_listing(
     State(state): State<AppState>,
+    Extension(session): Extension<UserSession>,
     Path(name): Path<String>,
 ) -> Result<Json<GetListingResponse>> {
-    let response = state.trading_service.get_listing(name.as_str()).await?;
+    let response = state
+        .trading_service
+        .get_listing(name.as_str(), &session)
+        .await?;
     Ok(Json(response))
 }
 

@@ -409,4 +409,5 @@ pub struct PendingTx {
     pub seller_address: Option<String>,
     pub buyer_address: Option<String>,
     pub inscription_utxo_sats: u64,
+    pub platform_fee: Option<u64>,
 }

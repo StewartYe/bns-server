@@ -4,6 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 
 /// Rune name entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,8 +48,8 @@ pub struct NameDetail {
     pub listing: Option<NameListingInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NamePoint {
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct NftPoints {
     pub name: String,
     pub points: i64,
     pub created_at: DateTime<Utc>,
