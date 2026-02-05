@@ -15,7 +15,7 @@ use bns_server::api::rankings::{
 };
 use bns_server::config::CONFIG;
 use bns_server::infra::ListingRow;
-use bns_server::service::{MarketingService, StarService};
+use bns_server::service::{MarketingService, ShoutOutService, StarService};
 use bns_server::{
     api,
     infra::{BlockchainClientImpl, IcAgent, PostgresClientImpl, RedisClient, RedisClientImpl},
@@ -137,6 +137,11 @@ async fn main() -> anyhow::Result<()> {
         postgres_client.clone(),
         blockchain_client.clone(),
     ));
+    
+    let shout_out_service = Arc::new(ShoutOutService::new(
+        blockchain_client.clone(),
+        postgres_client.clone(),
+    ));
 
     event_service.start_polling();
 
@@ -149,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
         marketing_service,
         trading_service,
         star_service,
+        shout_out_service,
         redis_client,
         postgres_client,
         pool,

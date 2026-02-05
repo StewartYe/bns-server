@@ -27,6 +27,9 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
   - [Star](#star)
   - [Unstar](#unstar)
   - [Get stars](#get-stars)
+- [Shout Out](#shout-out)
+  - [Create Shout Out](#create-shout-out)
+  - [Get Shout Out List](#get-shout-out-list)
 - [User Settings](#user-settings)
   - [Get Inventory](#get-inventory)
   - [Set Primary Name](#set-primary-name)
@@ -883,7 +886,61 @@ curl -X GET https://bns-server-testnet-219952077564.us-central1.run.app/v1/user/
 }]
 ```
 ---
+## Shout Out
 
+### Create Shout Out
+Create shout out for a listing 
+
+**Endpoint:** `PUT /v1/shout-out`
+
+**Authentication:** Session cookie or Bearer token
+
+**Example (with Bearer token):**
+
+```bash
+curl -X PUT https://bns-server-testnet-219952077564.us-central1.run.app/v1/shout-out \
+  -H "Authorization: Bearer eef97f47-2482-4390-9686-9857df9f3b97:a1b2c3d4-5678-90ab-cdef-1234567890ab"
+  --data '{
+    "psbt_hex": "232223......",
+    "ad_words": "THE FUTURE IS NOW, BUY THE DIP.",
+    "name": "DIP"
+  }'
+```
+**Request Fields:**
+
+| Field                     | Type | Description                             |
+|---------------------------|------|-----------------------------------------|
+| `psbt_hex`                | string | PSBT hex string to pay shout out fee    |
+| `ad_words`                | string[] | Introduction for your listing           |
+| `name`                    | string[] | Name the shou out for                   |
+
+### Get Shout Out List
+Get a list with fixed length of shout outs to show
+
+**Endpoint:** `GET /v1/shout-outs`
+
+**Authentication:** None
+**Request Example:**
+
+```bash
+curl -X GET https://bns-server-testnet-219952077564.us-central1.run.app/v1/shout-outs
+```
+
+**Response Example:**
+```json
+{
+  "txId": "2222222",
+  "listingName": "",
+  "userAddress": "tbcq......",
+  "adWords": "THE FUTURE IS NOW, BUY THE DIP",
+  "status": "confirmed",
+  "price": 111111111,
+  "createdAt": "1970-01-01T00:00:00Z",
+  "updatedAt": "1970-01-01T00:00:00Z"
+}
+```
+
+---
 ## User Settings
 
 ### Get Inventory

@@ -6,10 +6,7 @@
 //! - Name metadata
 
 use crate::AppError;
-use crate::domain::{
-    Listing, ListingStatus, NameMetadata, NftPoints, PendingTx, PendingTxAction, PendingTxStatus,
-    Star, StarTargetType, User,
-};
+use crate::domain::{Listing, ListingStatus, NameMetadata, NftPoints, PendingTx, PendingTxAction, PendingTxStatus, ShoutOut, ShoutOutStatus, Star, StarTargetType, User};
 use crate::error::Result;
 use async_trait::async_trait;
 use chrono::{TimeDelta, Utc};
@@ -106,6 +103,10 @@ pub trait PostgresClient: Send + Sync {
     async fn user_stars(&self, user: &str) -> Result<Vec<Star>>;
     async fn add_nft_points(&self, nft: &str, points: i64) -> Result<()>;
     async fn get_nft_points(&self, nft: &str) -> Result<Option<NftPoints>>;
+    async fn insert_shout_out(&self, shout_out: &ShoutOut) -> Result<()>;
+    async fn get_last_n_shout_out(&self, n: u64) -> Result<Vec<ShoutOut>>;
+    async fn confirm_shout_out(&self, tx_id: &str) -> Result<()>;
+    async fn get_pending_shout_out(&self) -> Result<Vec<ShoutOut>>;
 }
 
 /// PostgreSQL client implementation
@@ -755,6 +756,45 @@ impl PostgresClient for PostgresClientImpl {
             .await
             .map_err(|e| AppError::Database(e))
     }
+
+    async fn insert_shout_out(&self, shout_out: &ShoutOut) -> Result<()> {
+        sqlx::query!(
+            "insert into shout_outs(tx_id, listing_name, user_address, ad_words, status, price) values ($1, $2, $3, $4, $5, $6)",
+            shout_out.tx_id,
+            shout_out.listing_name,
+            shout_out.user_address,
+            shout_out.ad_words,
+            shout_out.status.to_string(),
+            shout_out.price,
+        ).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn get_last_n_shout_out(&self, n: u64) -> Result<Vec<ShoutOut>> {
+        let shout_outs = sqlx::query_as!(ShoutOut, "select * from shout_outs where status = $1 ORDER BY created_at desc  limit $2",
+            ShoutOutStatus::Confirmed.to_string(),
+            n as i64
+        ).fetch_all(&self.pool).await?;
+        Ok(shout_outs)
+    }
+
+
+    async fn confirm_shout_out(&self, tx_id: &str) -> Result<()> {
+        let _ = sqlx::query!(
+            "UPDATE shout_outs set status =$1 WHERE tx_id = $2",
+            ShoutOutStatus::Confirmed.to_string(),
+            tx_id
+        ).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn get_pending_shout_out(&self) -> Result<Vec<ShoutOut>> {
+        let shout_outs = sqlx::query_as!(ShoutOut, "select * from shout_outs where status = $1 ORDER BY created_at desc  limit 100",
+            ShoutOutStatus::Pending.to_string(),
+        ).fetch_all(&self.pool).await?;
+        Ok(shout_outs)
+    }
+
 }
 
 pub type DynPostgresClient = Arc<dyn PostgresClient>;

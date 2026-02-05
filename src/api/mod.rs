@@ -28,7 +28,6 @@ use axum::{
     Router, middleware,
     routing::{delete, get, post, put},
 };
-
 use crate::state::AppState;
 
 /// Health check endpoint
@@ -51,6 +50,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/trading/buy-and-delist", post(trading::buy_and_delist))
         .route("/trading/listing/{name}", get(trading::get_listing))
         .route("/user/trading/history/{offset}", get(user_history))
+        .route("/shout-out", put(shout_out::shout_out))
         // User endpoints (require auth)
         .route("/user/inventory", get(user::get_inventory))
         .route("/user/primary-name", put(user::set_primary_name))
@@ -82,6 +82,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/marketing", get(marketing::marketing_info))
         // Rankings endpoints
         .route("/rankings/{type}", get(rankings::get_ranking))
+        .route("/shout-outs", get(shout_out::get_shout_outs))
         // WebSocket endpoint
         .route("/ws/connect", get(ws::ws_handler));
 
