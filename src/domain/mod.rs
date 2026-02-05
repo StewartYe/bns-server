@@ -17,3 +17,4 @@ pub use name::*;
 pub use star::*;
 pub use trading::*;
 pub use user::*;
+pub use shout_out::*;

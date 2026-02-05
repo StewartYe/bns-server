@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE shout_outs set status =$1 WHERE tx_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "043ec86d18269da2f9c934fb5551bb0d24660c2cff639026749ccf7909472736"
+}

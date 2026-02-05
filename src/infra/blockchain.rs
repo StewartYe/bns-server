@@ -26,6 +26,12 @@ pub struct OrdBnsRuneResult {
     pub confirmations: u64,
 }
 
+/// Transaction info from getrawtransaction
+#[derive(Debug, Deserialize)]
+struct RawTransactionInfo {
+    confirmations: Option<u32>,
+}
+
 /// Internal response wrapper for /bns/rune/{rune}
 #[derive(Debug, Deserialize)]
 struct OrdBnsRuneResponse {
@@ -150,6 +156,17 @@ pub trait BlockchainClient: Send + Sync {
     /// Calculate transaction fee in satoshis
     /// Returns None if fee cannot be determined
     async fn get_tx_fee_sats(&self, txid: &str) -> Result<Option<u64>>;
+
+    // Bitcoin fullnode operations
+
+    /// Broadcast a signed transaction (hex format)
+    async fn broadcast_transaction(&self, tx_hex: &str) -> Result<String>;
+
+    /// Broadcast a signed PSBT (base64 format)
+    async fn broadcast_psbt(&self, psbt_base64: &str) -> Result<String>;
+    
+    /// Get transaction confirmations
+    async fn get_transaction_confirmations(&self, tx_id: &str) -> Result<Option<u32>>;
 }
 
 // ============================================================================
@@ -403,6 +420,71 @@ impl BlockchainClient for BlockchainClientImpl {
         } else {
             Ok(None)
         }
+    }
+
+    async fn broadcast_transaction(&self, tx_hex: &str) -> Result<String> {
+        // sendrawtransaction returns the txid
+        let tx_id: String = self
+            .bitcoin_rpc("sendrawtransaction", vec![serde_json::json!(tx_hex)])
+            .await?;
+
+        tracing::info!("Broadcast transaction: {}", tx_id);
+        Ok(tx_id)
+    }
+
+    async fn get_transaction_confirmations(&self, tx_id: &str) -> Result<Option<u32>> {
+        // Use getrawtransaction with verbose=true
+        let result: std::result::Result<RawTransactionInfo, _> = self
+            .bitcoin_rpc(
+                "getrawtransaction",
+                vec![serde_json::json!(tx_id), serde_json::json!(true)],
+            )
+            .await;
+
+        match result {
+            Ok(info) => Ok(info.confirmations),
+            Err(e) => {
+                // Transaction might not be found (not in mempool or blockchain)
+                tracing::debug!("Failed to get transaction {}: {:?}", tx_id, e);
+                Ok(None::<u32>)
+            }
+        }
+    }
+    
+    async fn broadcast_psbt(&self, psbt_base64: &str) -> Result<String> {
+        tracing::info!(
+            "Broadcasting PSBT, base64 length: {}, first 50 chars: {}",
+            psbt_base64.len(),
+            &psbt_base64[..psbt_base64.len().min(50)]
+        );
+
+        // First finalize the PSBT
+        #[derive(Deserialize)]
+        struct FinalizePsbtResult {
+            hex: Option<String>,
+            complete: bool,
+        }
+
+        let finalize_result: FinalizePsbtResult = self
+            .bitcoin_rpc("finalizepsbt", vec![serde_json::json!(psbt_base64)])
+            .await?;
+
+        tracing::info!(
+            "finalizepsbt result: complete={}, hex_len={}",
+            finalize_result.complete,
+            finalize_result.hex.as_ref().map(|h| h.len()).unwrap_or(0)
+        );
+
+        if !finalize_result.complete {
+            return Err(AppError::BadRequest("PSBT is not fully signed".into()));
+        }
+
+        let tx_hex = finalize_result
+            .hex
+            .ok_or_else(|| AppError::Internal("finalizepsbt did not return hex".into()))?;
+
+        // Now broadcast the finalized transaction
+        self.broadcast_transaction(&tx_hex).await
     }
 }
 
