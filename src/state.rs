@@ -9,7 +9,10 @@ use crate::api::rankings::{
 };
 use crate::config::Config;
 use crate::infra::{DynPostgresClient, DynRedisClient, IcAgent};
-use crate::service::{DynAuthService, DynMarketingService, DynNameService, DynShoutOutService, DynStarService, DynTradingService, DynUserService};
+use crate::service::{
+    DynAuthService, DynMarketingService, DynNameService, DynShoutOutService, DynStarService,
+    DynTradingService, DynUserService,
+};
 use tokio::sync::broadcast;
 
 /// Broadcast event types for real-time WebSocket updates
@@ -57,7 +60,7 @@ pub struct AppState {
 
     // Star_service: DynStarService
     pub star_service: DynStarService,
-    
+
     //shoutOutService: DynShoutOutService
     pub shout_out_service: DynShoutOutService,
 

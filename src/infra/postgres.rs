@@ -6,7 +6,10 @@
 //! - Name metadata
 
 use crate::AppError;
-use crate::domain::{Listing, ListingStatus, NameMetadata, NftPoints, PendingTx, PendingTxAction, PendingTxStatus, ShoutOut, ShoutOutStatus, Star, StarTargetType, User};
+use crate::domain::{
+    Listing, ListingStatus, NameMetadata, NftPoints, PendingTx, PendingTxAction, PendingTxStatus,
+    ShoutOut, ShoutOutStatus, Star, StarTargetType, User,
+};
 use crate::error::Result;
 use async_trait::async_trait;
 use chrono::{TimeDelta, Utc};
@@ -771,30 +774,38 @@ impl PostgresClient for PostgresClientImpl {
     }
 
     async fn get_last_n_shout_out(&self, n: u64) -> Result<Vec<ShoutOut>> {
-        let shout_outs = sqlx::query_as!(ShoutOut, "select * from shout_outs where status = $1 ORDER BY created_at desc  limit $2",
+        let shout_outs = sqlx::query_as!(
+            ShoutOut,
+            "select * from shout_outs where status = $1 ORDER BY created_at desc  limit $2",
             ShoutOutStatus::Confirmed.to_string(),
             n as i64
-        ).fetch_all(&self.pool).await?;
+        )
+        .fetch_all(&self.pool)
+        .await?;
         Ok(shout_outs)
     }
-
 
     async fn confirm_shout_out(&self, tx_id: &str) -> Result<()> {
         let _ = sqlx::query!(
             "UPDATE shout_outs set status =$1 WHERE tx_id = $2",
             ShoutOutStatus::Confirmed.to_string(),
             tx_id
-        ).execute(&self.pool).await?;
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     async fn get_pending_shout_out(&self) -> Result<Vec<ShoutOut>> {
-        let shout_outs = sqlx::query_as!(ShoutOut, "select * from shout_outs where status = $1 ORDER BY created_at desc  limit 100",
+        let shout_outs = sqlx::query_as!(
+            ShoutOut,
+            "select * from shout_outs where status = $1 ORDER BY created_at desc  limit 100",
             ShoutOutStatus::Pending.to_string(),
-        ).fetch_all(&self.pool).await?;
+        )
+        .fetch_all(&self.pool)
+        .await?;
         Ok(shout_outs)
     }
-
 }
 
 pub type DynPostgresClient = Arc<dyn PostgresClient>;

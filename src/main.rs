@@ -137,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
         postgres_client.clone(),
         blockchain_client.clone(),
     ));
-    
+
     let shout_out_service = Arc::new(ShoutOutService::new(
         blockchain_client.clone(),
         postgres_client.clone(),

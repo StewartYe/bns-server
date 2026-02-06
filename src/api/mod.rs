@@ -24,11 +24,11 @@ pub use trading::*;
 pub use user::*;
 pub use ws::*;
 
+use crate::state::AppState;
 use axum::{
     Router, middleware,
     routing::{delete, get, post, put},
 };
-use crate::state::AppState;
 
 /// Health check endpoint
 ///

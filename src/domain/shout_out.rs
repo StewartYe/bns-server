@@ -1,6 +1,6 @@
-use std::fmt::Display;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +36,6 @@ impl Display for ShoutOutStatus {
             ShoutOutStatus::Confirmed => write!(f, "confirmed"),
         }
     }
-    
 }
 
 #[test]
