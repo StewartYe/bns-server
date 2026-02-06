@@ -164,7 +164,7 @@ pub trait BlockchainClient: Send + Sync {
 
     /// Broadcast a signed PSBT (base64 format)
     async fn broadcast_psbt(&self, psbt_base64: &str) -> Result<String>;
-    
+
     /// Get transaction confirmations
     async fn get_transaction_confirmations(&self, tx_id: &str) -> Result<Option<u32>>;
 }
@@ -450,7 +450,7 @@ impl BlockchainClient for BlockchainClientImpl {
             }
         }
     }
-    
+
     async fn broadcast_psbt(&self, psbt_base64: &str) -> Result<String> {
         tracing::info!(
             "Broadcasting PSBT, base64 length: {}, first 50 chars: {}",

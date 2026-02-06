@@ -21,7 +21,7 @@ pub use auth::*;
 pub use event::*;
 pub use marketing::*;
 pub use name::*;
+pub use shout_out::*;
 pub use star::*;
 pub use trading::*;
 pub use user::*;
-pub use shout_out::*;
