@@ -1,12 +1,12 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats\n             FROM listings WHERE name = $1 AND status = 'listed' ORDER BY listed_at DESC LIMIT 1",
+  "query": "\n            UPDATE trade_history SET status = $1, updated_at = NOW() WHERE tx_id = $2\n            RETURNING id, name, who, action, tx_id, created_at, updated_at, status, seller_address, previous_price_sats, price_sats, inscription_utxo_sats, buyer_address, platform_fee\n            ",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Varchar"
+        "type_info": "Uuid"
       },
       {
         "ordinal": 1,
@@ -15,22 +15,22 @@
       },
       {
         "ordinal": 2,
-        "name": "seller_address",
+        "name": "who",
         "type_info": "Varchar"
       },
       {
         "ordinal": 3,
-        "name": "price_sats",
-        "type_info": "Int8"
+        "name": "action",
+        "type_info": "Varchar"
       },
       {
         "ordinal": 4,
-        "name": "status",
+        "name": "tx_id",
         "type_info": "Varchar"
       },
       {
         "ordinal": 5,
-        "name": "listed_at",
+        "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
@@ -40,32 +40,43 @@
       },
       {
         "ordinal": 7,
-        "name": "previous_price_sats",
-        "type_info": "Int8"
+        "name": "status",
+        "type_info": "Varchar"
       },
       {
         "ordinal": 8,
-        "name": "tx_id",
+        "name": "seller_address",
         "type_info": "Varchar"
       },
       {
         "ordinal": 9,
-        "name": "buyer_address",
-        "type_info": "Varchar"
+        "name": "previous_price_sats",
+        "type_info": "Int8"
       },
       {
         "ordinal": 10,
-        "name": "new_price_sats",
+        "name": "price_sats",
         "type_info": "Int8"
       },
       {
         "ordinal": 11,
         "name": "inscription_utxo_sats",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "buyer_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 13,
+        "name": "platform_fee",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
       "Left": [
+        "Varchar",
         "Text"
       ]
     },
@@ -74,15 +85,17 @@
       false,
       false,
       false,
+      true,
       false,
       false,
       false,
       true,
+      true,
+      true,
       false,
       true,
-      true,
-      false
+      true
     ]
   },
-  "hash": "25545813bd46a2a09a250db3ec5dbaed9a4480830d35f6e546e95c76b403f9fa"
+  "hash": "c3d820399c027c17e1ec7fa71236f2901c171c09cc6187873ce6043d8de3da4e"
 }

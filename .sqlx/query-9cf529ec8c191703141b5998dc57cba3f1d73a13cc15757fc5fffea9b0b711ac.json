@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE listings SET price_sats = $1, updated_at = NOW() WHERE id = $2",
+  "query": "UPDATE listings SET price_sats = $1, updated_at = NOW() WHERE name = $2",
   "describe": {
     "columns": [],
     "parameters": {
@@ -11,5 +11,5 @@
     },
     "nullable": []
   },
-  "hash": "2350371bebf6979bb1f8ecede361b8452ca48de17443c5fd292634c5d0b27825"
+  "hash": "9cf529ec8c191703141b5998dc57cba3f1d73a13cc15757fc5fffea9b0b711ac"
 }

@@ -6,106 +6,118 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
-/// Listing status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ListingStatus {
-    ///the listing record had been delist
-    List,
-    /// Currently listed and available for purchase
-    Listed,
-    /// Was bought and immediately re-listed (historical)
-    BoughtAndRelisted,
-    /// Was bought and taken off market (historical)
-    BoughtAndDelisted,
-    /// Price was changed by seller (historical)
-    Relisted,
-    /// Was removed from sale by owner (historical)
-    Delisted,
-}
-
-impl From<String> for ListingStatus {
-    fn from(value: String) -> Self {
-        match value.as_str() {
-            "listed" => ListingStatus::Listed,
-            "bought_and_relisted" => ListingStatus::BoughtAndRelisted,
-            "bought_and_delisted" => ListingStatus::BoughtAndDelisted,
-            "relisted" => ListingStatus::Relisted,
-            "delisted" => ListingStatus::Delisted,
-            _ => ListingStatus::Listed,
-        }
-    }
-}
-
-impl Display for ListingStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ListingStatus::List => write!(f, "list"),
-            ListingStatus::Listed => write!(f, "listed"),
-            ListingStatus::BoughtAndRelisted => write!(f, "bought_and_relisted"),
-            ListingStatus::BoughtAndDelisted => write!(f, "bought_and_delisted"),
-            ListingStatus::Relisted => write!(f, "relisted"),
-            ListingStatus::Delisted => write!(f, "delisted"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UserAction {
-    Sell,
-    Buy,
-    Delist,
-    List,
-}
-
-impl Display for UserAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UserAction::Sell => write!(f, "SELL"),
-            UserAction::Buy => write!(f, "BUY"),
-            UserAction::Delist => write!(f, "DELIST"),
-            UserAction::List => write!(f, "LIST"),
-        }
-    }
-}
-
-/// Market listing entity
+/// Market listing entity (only currently listed names)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Listing {
-    /// Unique listing ID
-    pub id: String,
-    /// The Rune name being listed
+    /// The Rune name being listed (primary key)
     pub name: String,
     /// Seller's Bitcoin address
     pub seller_address: String,
     /// Price in satoshis
     pub price_sats: u64,
-    /// Current status
-    pub status: ListingStatus,
     /// Listing creation time
     pub listed_at: DateTime<Utc>,
     /// Last update time
     pub updated_at: DateTime<Utc>,
-    /// Previous price (for discount calculation)
-    pub previous_price_sats: u64,
     /// Bitcoin transaction ID
     pub tx_id: String,
-    /// Buyer's Bitcoin address (for bought_and_relisted, bought_and_delisted)
-    pub buyer_address: Option<String>,
-    /// New price in satoshis (for bought_and_relisted, relisted)
-    pub new_price_sats: Option<u64>,
     pub inscription_utxo_sats: u64,
 }
 
+/// Trade action type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeAction {
+    List,
+    Delist,
+    Relist,
+    BuyAndRelist,
+    BuyAndDelist,
+}
+
+impl From<String> for TradeAction {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "list" => TradeAction::List,
+            "delist" => TradeAction::Delist,
+            "relist" => TradeAction::Relist,
+            "buy_and_relist" => TradeAction::BuyAndRelist,
+            "buy_and_delist" => TradeAction::BuyAndDelist,
+            _ => TradeAction::List,
+        }
+    }
+}
+
+impl Display for TradeAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TradeAction::List => write!(f, "list"),
+            TradeAction::Delist => write!(f, "delist"),
+            TradeAction::Relist => write!(f, "relist"),
+            TradeAction::BuyAndRelist => write!(f, "buy_and_relist"),
+            TradeAction::BuyAndDelist => write!(f, "buy_and_delist"),
+        }
+    }
+}
+
+/// Trade history status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeStatus {
+    /// Initial state before canister processes
+    Submitted,
+    /// Canister has started processing
+    Pending,
+    /// Transaction finalized in mempool
+    Finalized,
+    /// Transaction confirmed on chain
+    Confirmed,
+    /// Transaction rejected
+    Rejected,
+}
+
+impl From<String> for TradeStatus {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "submitted" => TradeStatus::Submitted,
+            "pending" => TradeStatus::Pending,
+            "finalized" => TradeStatus::Finalized,
+            "confirmed" => TradeStatus::Confirmed,
+            "rejected" => TradeStatus::Rejected,
+            _ => TradeStatus::Submitted,
+        }
+    }
+}
+
+impl Display for TradeStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TradeStatus::Submitted => write!(f, "submitted"),
+            TradeStatus::Pending => write!(f, "pending"),
+            TradeStatus::Finalized => write!(f, "finalized"),
+            TradeStatus::Confirmed => write!(f, "confirmed"),
+            TradeStatus::Rejected => write!(f, "rejected"),
+        }
+    }
+}
+
+/// Trade history record
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListingHistory {
+pub struct TradeRecord {
     pub id: String,
     pub name: String,
-    pub action: String,
+    pub who: String,
+    pub action: TradeAction,
+    pub tx_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub status: TradeStatus,
+    pub seller_address: Option<String>,
+    pub previous_price_sats: Option<u64>,
     pub price_sats: Option<u64>,
-    pub status: String,
-    pub time: DateTime<Utc>,
+    pub inscription_utxo_sats: u64,
+    pub buyer_address: Option<String>,
+    pub platform_fee: Option<u64>,
 }
 
 // ============================================================================
@@ -196,8 +208,6 @@ pub struct ListNameParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListResponse {
-    /// Unique listing ID
-    pub id: String,
     /// Bitcoin transaction ID
     pub tx_id: String,
     /// The name that was listed
@@ -211,11 +221,9 @@ pub struct ListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DelistResponse {
-    /// Unique listing ID
-    pub id: String,
     /// Bitcoin transaction ID
     pub tx_id: String,
-    /// The name that was listed
+    /// The name that was delisted
     pub name: String,
 }
 
@@ -252,14 +260,25 @@ pub struct GetListingResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserHistoriesResponse {
-    pub listings: Vec<ListingHistory>,
+    pub histories: Vec<TradeHistoryItem>,
     pub total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TradeHistoryItem {
+    pub id: String,
+    pub name: String,
+    pub action: String,
+    pub price_sats: Option<u64>,
+    pub status: String,
+    pub time: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NameHistoriesResponse {
-    pub listings: Vec<NameDealHistory>,
+    pub histories: Vec<NameDealHistory>,
     pub total: u64,
 }
 
@@ -272,23 +291,13 @@ pub struct NameDealHistory {
     pub time: DateTime<Utc>,
 }
 
-/// Response for get listing price range
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListingPriceRangeResponse {
-    pub min: u64,
-    pub max: u64,
-}
-
 /// Info about a listed name
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListingInfo {
-    pub id: String,
     pub name: String,
     pub seller_address: String,
     pub price_sats: u64,
-    pub status: ListingStatus,
     pub listed_at: DateTime<Utc>,
     pub tx_id: String,
     pub inscription_utxo_sats: u64,
@@ -297,11 +306,9 @@ pub struct ListingInfo {
 impl From<Listing> for ListingInfo {
     fn from(listing: Listing) -> Self {
         ListingInfo {
-            id: listing.id,
             name: listing.name,
             seller_address: listing.seller_address,
             price_sats: listing.price_sats,
-            status: listing.status,
             listed_at: listing.listed_at,
             tx_id: listing.tx_id,
             inscription_utxo_sats: listing.inscription_utxo_sats,
@@ -309,7 +316,7 @@ impl From<Listing> for ListingInfo {
     }
 }
 
-/// Buy action type
+/// Buy action type (kept for backwards compatibility in validators)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TradingAction {
@@ -320,94 +327,4 @@ pub enum TradingAction {
     Relist,
     List,
     Delist,
-}
-
-/// Pending transaction status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingTxStatus {
-    /// Initial state before canister processes
-    Submitted,
-    /// Canister has started processing
-    Pending,
-    /// Transaction finalized in mempool
-    Finalized,
-    /// Transaction confirmed on chain
-    Confirmed,
-    /// Transaction rejected
-    Rejected,
-}
-
-impl From<String> for PendingTxStatus {
-    fn from(value: String) -> Self {
-        match value.as_str() {
-            "submitted" => PendingTxStatus::Submitted,
-            "pending" => PendingTxStatus::Pending,
-            "finalized" => PendingTxStatus::Finalized,
-            "confirmed" => PendingTxStatus::Confirmed,
-            "rejected" => PendingTxStatus::Rejected,
-            _ => PendingTxStatus::Submitted,
-        }
-    }
-}
-
-impl std::fmt::Display for PendingTxStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PendingTxStatus::Submitted => write!(f, "submitted"),
-            PendingTxStatus::Pending => write!(f, "pending"),
-            PendingTxStatus::Finalized => write!(f, "finalized"),
-            PendingTxStatus::Confirmed => write!(f, "confirmed"),
-            PendingTxStatus::Rejected => write!(f, "rejected"),
-        }
-    }
-}
-
-/// Pending transaction action type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingTxAction {
-    List,
-    BuyAndRelist,
-    BuyAndDelist,
-    Delist,
-}
-
-impl From<String> for PendingTxAction {
-    fn from(value: String) -> Self {
-        match value.as_str() {
-            "list" => PendingTxAction::List,
-            "buy_and_relist" => PendingTxAction::BuyAndRelist,
-            "buy_and_delist" => PendingTxAction::BuyAndDelist,
-            "delist" => PendingTxAction::Delist,
-            _ => PendingTxAction::List,
-        }
-    }
-}
-
-impl std::fmt::Display for PendingTxAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PendingTxAction::List => write!(f, "list"),
-            PendingTxAction::BuyAndRelist => write!(f, "buy_and_relist"),
-            PendingTxAction::BuyAndDelist => write!(f, "buy_and_delist"),
-            PendingTxAction::Delist => write!(f, "delist"),
-        }
-    }
-}
-
-/// Pending transaction entity
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PendingTx {
-    pub tx_id: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub name: String,
-    pub action: PendingTxAction,
-    pub status: PendingTxStatus,
-    pub previous_price_sats: Option<u64>,
-    pub price_sats: Option<u64>,
-    pub seller_address: Option<String>,
-    pub buyer_address: Option<String>,
-    pub inscription_utxo_sats: u64,
-    pub platform_fee: Option<u64>,
 }

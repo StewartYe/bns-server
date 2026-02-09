@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT count(*) as listing_count, sum(price_sats) as valuation FROM listings WHERE status = 'listed'",
+  "query": "SELECT count(*) as listing_count, sum(price_sats) as valuation FROM listings",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       null
     ]
   },
-  "hash": "91d3e0691979c7c90044f989b9f4fffd6d0e23e39b6962f641a767506055da7c"
+  "hash": "ada4e61bacf85bd5fa1618793d696f5143250764bee3056726af6919c6f5178b"
 }

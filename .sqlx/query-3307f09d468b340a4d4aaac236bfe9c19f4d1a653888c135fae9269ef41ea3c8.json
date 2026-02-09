@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT name, seller_address, price_sats, listed_at, updated_at, tx_id, inscription_utxo_sats\n             FROM listings ORDER BY listed_at DESC LIMIT $1 OFFSET $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "seller_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "price_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "listed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "tx_id",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 6,
+        "name": "inscription_utxo_sats",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3307f09d468b340a4d4aaac236bfe9c19f4d1a653888c135fae9269ef41ea3c8"
+}

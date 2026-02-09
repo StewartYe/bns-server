@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO listings (name, seller_address, price_sats, listed_at, updated_at, tx_id, inscription_utxo_sats)\n             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Varchar",
+        "Int8",
+        "Timestamptz",
+        "Timestamptz",
+        "Varchar",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "662693700da7f0b81390f901653f1845d4fa141584b1e5a3ee421febe77c67ba"
+}
