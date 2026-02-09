@@ -587,10 +587,29 @@ impl TradingService {
             params.seller_address
         );
 
-        self.user_service
-            .verify_name_ownership(&params.name, caller_address)
-            .await?;
+        let last_action_by_name = self
+            .postgres
+            .get_last_name_trade_record(params.name.as_str())
+            .await;
+        let mut owner_inscription_checked = false;
+        if let Ok(Some(tr)) = last_action_by_name {
+            if tr.action == TradeAction::Delist || tr.action == TradeAction::BuyAndDelist {
+                let prev_out = &psbt.unsigned_tx.input[0].previous_output;
+                if prev_out.txid.to_string() == tr.tx_id.unwrap_or_default() && prev_out.vout == 0 {
+                    owner_inscription_checked = true;
+                }
+            }
+        }
 
+        if !owner_inscription_checked {
+            self.user_service
+                .verify_name_ownership(&params.name, caller_address)
+                .await?;
+            let prev_out = &psbt.unsigned_tx.input[0].previous_output;
+            let input0_outpoint = format!("{}:{}", prev_out.txid, prev_out.vout);
+            self.validate_inscription(&params.name, &input0_outpoint)
+                .await?;
+        }
         if params.seller_address != caller_address {
             return Err(AppError::Forbidden(format!(
                 "Caller address {} does not match seller address {}",
@@ -599,12 +618,6 @@ impl TradingService {
         }
 
         ListValidator::validate_psbt(&psbt, &db_pool_address, None, &params)?;
-
-        let prev_out = &psbt.unsigned_tx.input[0].previous_output;
-        let input0_outpoint = format!("{}:{}", prev_out.txid, prev_out.vout);
-        self.validate_inscription(&params.name, &input0_outpoint)
-            .await?;
-
         let previous_price_sats = self
             .calculate_previous_price(params.name.as_str())
             .await
