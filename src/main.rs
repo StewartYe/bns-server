@@ -202,7 +202,7 @@ async fn rebuild_rankings_from_postgres(
     tracing::info!("Cleared all ranking ZSets");
 
     // Step 2: Rebuild new_listings, top_sales, best_deals from listed items
-    let listed_rows = sqlx::query_as::<_, ListedRow>(
+    let listed_rows = sqlx::query_as!(ListedRow,
         "SELECT l.name, l.seller_address, l.price_sats, l.listed_at, l.inscription_utxo_sats,
                 (SELECT th.previous_price_sats FROM trade_history th WHERE th.name = l.name AND th.action IN ('buy_and_relist', 'relist') ORDER BY th.created_at DESC LIMIT 1) as previous_price_sats
          FROM listings l ORDER BY l.listed_at DESC",
@@ -261,7 +261,8 @@ async fn rebuild_rankings_from_postgres(
     }
 
     // Step 3: Rebuild recent_sales from sold items (from trade_history)
-    let sold_rows = sqlx::query_as::<_, SoldRow>(
+    let sold_rows = sqlx::query_as!(
+        SoldRow,
         "SELECT name, price_sats, seller_address, buyer_address, updated_at
          FROM trade_history
          WHERE action IN ('buy_and_relist', 'buy_and_delist')
@@ -291,7 +292,8 @@ async fn rebuild_rankings_from_postgres(
     }
 
     // Step 4: Rebuild most_traded (count trades per name, from trade_history)
-    let most_traded_rows = sqlx::query_as::<_, MostTradedRow>(
+    let most_traded_rows = sqlx::query_as!(
+        MostTradedRow,
         "SELECT name, COUNT(*) as trade_count, MAX(price_sats) as last_price_sats,
                 MAX(seller_address) as seller_address, MAX(buyer_address) as buyer_address,
                 MAX(updated_at) as last_traded_at
@@ -300,7 +302,7 @@ async fn rebuild_rankings_from_postgres(
            AND status IN ('pending', 'finalized', 'confirmed')
          GROUP BY name
          ORDER BY trade_count DESC
-         LIMIT 20",
+         LIMIT 20"
     )
     .fetch_all(pool)
     .await?;
@@ -313,11 +315,11 @@ async fn rebuild_rankings_from_postgres(
     for row in &most_traded_rows {
         let most_traded_item = MostTradedItem {
             name: row.name.clone(),
-            price_sats: row.last_price_sats as u64,
+            price_sats: row.last_price_sats.unwrap_or_default() as u64,
             seller_address: row.seller_address.clone().unwrap_or_default(),
             buyer_address: row.buyer_address.clone().unwrap_or_default(),
-            trade_count: row.trade_count as u32,
-            sold_at: row.last_traded_at.timestamp(),
+            trade_count: row.trade_count.unwrap_or_default() as u32,
+            sold_at: row.last_traded_at.unwrap_or_default().timestamp(),
         };
         if let Err(e) = redis.add_most_traded(&most_traded_item).await {
             tracing::warn!("Failed to add {} to most_traded: {:?}", row.name, e);
@@ -325,7 +327,8 @@ async fn rebuild_rankings_from_postgres(
     }
 
     // Step 5: Rebuild top_earners (sum earnings per seller, from trade_history)
-    let top_earner_rows = sqlx::query_as::<_, TopEarnerRow>(
+    let top_earner_rows =
+        sqlx::query_as!(TopEarnerRow,
         "SELECT seller_address, SUM(price_sats)::BIGINT as total_earnings, COUNT(*) as trade_count
          FROM trade_history
          WHERE action IN ('buy_and_relist', 'buy_and_delist')
@@ -334,8 +337,8 @@ async fn rebuild_rankings_from_postgres(
          ORDER BY total_earnings DESC
          LIMIT 20",
     )
-    .fetch_all(pool)
-    .await?;
+        .fetch_all(pool)
+        .await?;
 
     tracing::info!(
         "Rebuilding top_earners from {} sellers",
@@ -344,13 +347,13 @@ async fn rebuild_rankings_from_postgres(
 
     for row in &top_earner_rows {
         let top_earner_item = TopEarnerItem {
-            address: row.seller_address.clone(),
-            total_profit_sats: row.total_earnings,
-            trade_count: row.trade_count as u32,
+            address: row.seller_address.clone().unwrap_or_default(),
+            total_profit_sats: row.total_earnings.unwrap_or_default(),
+            trade_count: row.trade_count.unwrap_or_default() as u32,
         };
         if let Err(e) = redis.add_top_earner(&top_earner_item).await {
             tracing::warn!(
-                "Failed to add {} to top_earners: {:?}",
+                "Failed to add {:?} to top_earners: {:?}",
                 row.seller_address,
                 e
             );
@@ -387,17 +390,17 @@ struct SoldRow {
 #[derive(Debug, sqlx::FromRow)]
 struct MostTradedRow {
     name: String,
-    trade_count: i64,
-    last_price_sats: i64,
+    trade_count: Option<i64>,
+    last_price_sats: Option<i64>,
     seller_address: Option<String>,
     buyer_address: Option<String>,
-    last_traded_at: chrono::DateTime<chrono::Utc>,
+    last_traded_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Database row for top_earners aggregation
 #[derive(Debug, sqlx::FromRow)]
 struct TopEarnerRow {
-    seller_address: String,
-    total_earnings: i64,
-    trade_count: i64,
+    seller_address: Option<String>,
+    total_earnings: Option<i64>,
+    trade_count: Option<i64>,
 }
