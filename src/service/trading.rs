@@ -167,11 +167,6 @@ impl TradingService {
             params.new_price,
             params.buyer_address
         );
-
-        self.user_service
-            .verify_name_ownership(&params.name, &db_pool_address)
-            .await?;
-
         if params.buyer_address != caller_address {
             return Err(AppError::Forbidden(format!(
                 "Caller address {} does not match buyer address {}",
@@ -197,11 +192,6 @@ impl TradingService {
         }
 
         BuyAndRelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
-
-        let prev_out = &psbt.unsigned_tx.input[0].previous_output;
-        let input0_outpoint = format!("{}:{}", prev_out.txid, prev_out.vout);
-        self.validate_inscription(&params.name, &input0_outpoint)
-            .await?;
 
         self.validate_price(db_listing.price_sats, params.new_price)?;
 
@@ -371,11 +361,6 @@ impl TradingService {
         }
 
         tracing::info!("Processing buy_and_delist: name={}", params.name);
-
-        self.user_service
-            .verify_name_ownership(&params.name, &db_pool_address)
-            .await?;
-
         if params.buyer_address != caller_address {
             return Err(AppError::Forbidden(format!(
                 "Caller address {} does not match buyer address {}",
@@ -401,12 +386,6 @@ impl TradingService {
         }
 
         BuyAndDelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
-
-        let prev_out = &psbt.unsigned_tx.input[0].previous_output;
-        let input0_outpoint = format!("{}:{}", prev_out.txid, prev_out.vout);
-        self.validate_inscription(&params.name, &input0_outpoint)
-            .await?;
-
         let proof_bytes = request.initiator_utxo_proof.clone();
         let invoke_args = InvokeArgs {
             client_info: None,
@@ -497,11 +476,6 @@ impl TradingService {
         }
 
         tracing::info!("Processing delist: name={}", params.name);
-
-        self.user_service
-            .verify_name_ownership(&params.name, &db_pool_address)
-            .await?;
-
         let db_listing = self
             .postgres
             .get_listed_listing_by_name(&params.name)
@@ -518,11 +492,6 @@ impl TradingService {
         }
 
         DelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
-
-        let prev_out = &psbt.unsigned_tx.input[0].previous_output;
-        let input0_outpoint = format!("{}:{}", prev_out.txid, prev_out.vout);
-        self.validate_inscription(&params.name, &input0_outpoint)
-            .await?;
 
         let proof_bytes = request.initiator_utxo_proof.clone();
         let invoke_args = InvokeArgs {
