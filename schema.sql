@@ -1,5 +1,5 @@
 -- BNS Server Database Schema
--- Generated from migrations 001-017
+-- Generated from migrations 001-019
 -- This file represents the current database schema and can be used to initialize a new database
 
 -- Users table
@@ -10,28 +10,19 @@ CREATE TABLE IF NOT EXISTS users (
     primary_name VARCHAR(64)
 );
 
--- Listings table
--- Status values: list, listed, bought_and_relisted, bought_and_delisted, relisted, delisted
+-- Listings table (only currently listed names)
 CREATE TABLE IF NOT EXISTS listings (
-    id VARCHAR(36) PRIMARY KEY,
-    name VARCHAR(64) NOT NULL,
+    name VARCHAR(64) PRIMARY KEY,
     seller_address VARCHAR(100) NOT NULL,
     price_sats BIGINT NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'listed',
     listed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    previous_price_sats BIGINT,
-    tx_id VARCHAR(64) NOT NULL,
-    buyer_address VARCHAR(100),
-    new_price_sats BIGINT,
+    tx_id VARCHAR(64) NOT NULL UNIQUE,
     inscription_utxo_sats BIGINT NOT NULL DEFAULT 546
 );
 
 CREATE INDEX IF NOT EXISTS idx_listings_seller ON listings(seller_address);
-CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status);
-CREATE INDEX IF NOT EXISTS idx_listings_name ON listings(name);
 CREATE INDEX IF NOT EXISTS idx_listings_tx_id ON listings(tx_id);
-CREATE INDEX IF NOT EXISTS idx_listings_buyer ON listings(buyer_address);
 
 -- Name metadata table
 CREATE TABLE IF NOT EXISTS name_metadata (
@@ -55,26 +46,31 @@ CREATE TABLE IF NOT EXISTS system_state (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Pending transactions table (tracking tx_ids waiting for canister events)
--- status: submitted (initial), pending, finalized, confirmed, rejected
--- action: list, buy_and_relist, buy_and_delist, delist
-CREATE TABLE IF NOT EXISTS pending_txs (
-    tx_id VARCHAR(100) PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+-- Trade history table (all trade actions for names)
+-- status: submitted (default), pending, finalized, confirmed, rejected
+-- action: list, delist, relist, buy_and_relist, buy_and_delist
+CREATE TABLE IF NOT EXISTS trade_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(64) NOT NULL,
+    who VARCHAR(100) NOT NULL,
     action VARCHAR(20) NOT NULL,
+    tx_id VARCHAR(100),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     status VARCHAR(20) NOT NULL DEFAULT 'submitted',
+    seller_address VARCHAR(100),
     previous_price_sats BIGINT,
     price_sats BIGINT,
-    seller_address VARCHAR(100),
-    buyer_address VARCHAR(100),
     inscription_utxo_sats BIGINT NOT NULL DEFAULT 546,
+    buyer_address VARCHAR(100),
     platform_fee BIGINT
 );
 
-CREATE INDEX IF NOT EXISTS idx_pending_txs_created ON pending_txs(created_at);
-CREATE INDEX IF NOT EXISTS idx_pending_txs_status ON pending_txs(status);
-CREATE INDEX IF NOT EXISTS idx_pending_txs_name ON pending_txs(name);
+CREATE INDEX IF NOT EXISTS idx_trade_history_name ON trade_history(name);
+CREATE INDEX IF NOT EXISTS idx_trade_history_tx_id ON trade_history(tx_id);
+CREATE INDEX IF NOT EXISTS idx_trade_history_status ON trade_history(status);
+CREATE INDEX IF NOT EXISTS idx_trade_history_who ON trade_history(who);
+CREATE INDEX IF NOT EXISTS idx_trade_history_created ON trade_history(created_at);
 
 -- Name to pool address mapping table
 -- Caches the relationship between BNS names and their pool addresses
@@ -101,4 +97,16 @@ CREATE TABLE IF NOT EXISTS nft_points (
     name VARCHAR(100) PRIMARY KEY NOT NULL,
     points BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Shout outs table
+CREATE TABLE IF NOT EXISTS shout_outs (
+    tx_id VARCHAR(100) PRIMARY KEY,
+    listing_name VARCHAR(64) NOT NULL,
+    user_address VARCHAR(64) NOT NULL,
+    ad_words TEXT NOT NULL,
+    status VARCHAR(64) NOT NULL,
+    price BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

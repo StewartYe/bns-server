@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE listings SET seller_address = $1, price_sats = $2, tx_id = $3, updated_at = NOW() WHERE name = $4",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar",
+        "Int8",
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bc6c739f4a7bf60aa2db19e94cea3ed9e9bc77cc1f8d705990b5787b499b9420"
+}

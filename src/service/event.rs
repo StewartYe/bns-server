@@ -10,14 +10,13 @@ use std::time::Duration;
 use crate::api::rankings::{
     BestDealItem, MostTradedItem, NewListingItem, RecentSaleItem, TopEarnerItem, TopSaleItem,
 };
-use crate::domain::{Listing, ListingStatus, PendingTx, PendingTxAction, PendingTxStatus};
+use crate::domain::{Listing, TradeAction, TradeRecord, TradeStatus};
 use crate::infra::bns_canister::{BnsCanisterEvent, ReeActionStatus};
 use crate::infra::{DynBlockchainClient, DynPostgresClient, DynRedisClient, IcAgent};
 use crate::state::BroadcastEvent;
 use crate::{GLOBAL_MIN_PRICE, INIT_MAX_PRICE};
 use chrono::Utc;
 use tokio::sync::broadcast;
-use uuid::Uuid;
 
 /// Event service for canister event polling
 #[derive(Clone)]
@@ -48,25 +47,13 @@ impl EventService {
         }
     }
 
-    /// Start the background polling task
-    ///
-    /// This spawns an async task that polls the BNS canister for events
-    /// and processes them. The task runs indefinitely.
     pub fn start_polling(self: Arc<Self>) {
         tokio::spawn(async move {
             self.polling_loop().await;
         });
     }
 
-    /// Main polling loop
-    ///
-    /// Polls BNS canister get_events every minute and processes:
-    /// - Pending: Save listing to PostgreSQL and Redis
-    /// - Finalized: Update status to Active, remove from tracking
-    /// - Confirmed: Informational logging only
-    /// - Rejected: Remove from tracking
     async fn polling_loop(&self) {
-        // Load last event offset from database (persisted across restarts)
         let mut last_event_offset = match self.postgres.get_event_offset().await {
             Ok(offset) => {
                 tracing::info!("Loaded event offset from database: {}", offset);
@@ -103,16 +90,12 @@ impl EventService {
         }
     }
 
-    /// Poll once and process events
-    ///
-    /// Returns the new offset if events were processed, None on error.
     async fn poll_once(&self, last_event_offset: u64) -> Option<u64> {
         tracing::debug!(
             "Starting poll_once, last_event_offset: {}",
             last_event_offset
         );
 
-        // Poll events from BNS canister
         let events = match self.ic_agent.get_events(last_event_offset, 10).await {
             Ok(events) => events,
             Err(e) => {
@@ -130,10 +113,8 @@ impl EventService {
         let mut new_offset = last_event_offset;
 
         for (_timestamp, event) in events {
-            // Update offset for next poll
             new_offset += 1;
 
-            // Handle ReeActionStatusChanged events
             if let BnsCanisterEvent::ReeActionStatusChanged {
                 action_id,
                 status,
@@ -147,7 +128,6 @@ impl EventService {
         Some(new_offset)
     }
 
-    /// Handle a status change event for a tracked transaction
     async fn handle_status_change(&self, action_id: &str, status: ReeActionStatus) {
         tracing::info!(
             "Processing status change for tx_id {}: {:?}",
@@ -157,44 +137,39 @@ impl EventService {
 
         match status {
             ReeActionStatus::Pending => {
-                // Update status to pending and get the pending_tx data
                 match self
                     .postgres
-                    .update_pending_tx_status(action_id, PendingTxStatus::Pending)
+                    .update_trade_status(action_id, TradeStatus::Pending)
                     .await
                 {
-                    Ok(Some(pending_tx)) => {
-                        self.handle_pending(&pending_tx).await;
+                    Ok(Some(trade_record)) => {
+                        self.handle_pending(&trade_record).await;
                     }
                     Ok(None) => {
                         tracing::debug!(
-                            "No pending tx found for action_id {}, skipping",
+                            "No trade record found for action_id {}, skipping",
                             action_id
                         );
                     }
                     Err(e) => {
-                        tracing::error!("Failed to update pending tx status: {:?}", e);
+                        tracing::error!("Failed to update trade status: {:?}", e);
                     }
                 }
             }
             ReeActionStatus::Finalized => {
                 match self
                     .postgres
-                    .update_pending_tx_status(action_id, PendingTxStatus::Finalized)
+                    .update_trade_status(action_id, TradeStatus::Finalized)
                     .await
                 {
-                    Ok(Some(pending_tx)) => {
-                        tracing::info!(
-                            "Tx {} finalized for listing {}",
-                            action_id,
-                            pending_tx.name
-                        );
+                    Ok(Some(trade_record)) => {
+                        tracing::info!("Tx {} finalized for name {}", action_id, trade_record.name);
                     }
                     Ok(None) => {
-                        tracing::debug!("No pending tx found for action_id {}", action_id);
+                        tracing::debug!("No trade record found for action_id {}", action_id);
                     }
                     Err(e) => {
-                        tracing::error!("Failed to update pending tx status to finalized: {:?}", e);
+                        tracing::error!("Failed to update trade status to finalized: {:?}", e);
                     }
                 }
             }
@@ -206,135 +181,326 @@ impl EventService {
                 );
                 if let Err(e) = self
                     .postgres
-                    .update_pending_tx_status(action_id, PendingTxStatus::Confirmed)
+                    .update_trade_status(action_id, TradeStatus::Confirmed)
                     .await
                 {
-                    tracing::error!("Failed to update pending tx status to confirmed: {:?}", e);
+                    tracing::error!("Failed to update trade status to confirmed: {:?}", e);
                 }
             }
             ReeActionStatus::Rejected(reason) => {
                 tracing::warn!("Tx {} rejected: {}", action_id, reason);
-                if let Err(e) = self
+                match self
                     .postgres
-                    .update_pending_tx_status(action_id, PendingTxStatus::Rejected)
+                    .update_trade_status(action_id, TradeStatus::Rejected)
                     .await
                 {
-                    tracing::error!("Failed to update pending tx status to rejected: {:?}", e);
+                    Ok(Some(trade_record)) => {
+                        self.handle_rejected(&trade_record).await;
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            "No trade record found for rejected action_id {}",
+                            action_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to update trade status to rejected: {:?}", e);
+                    }
                 }
             }
         }
     }
 
-    /// Handle Pending status - save listing to PostgreSQL and Redis
-    async fn handle_pending(&self, pending_tx: &PendingTx) {
-        match pending_tx.action {
-            PendingTxAction::List => {
-                self.handle_list_pending(pending_tx).await;
+    // ========================================================================
+    // Handle Pending status - modify listings table
+    // ========================================================================
+
+    async fn handle_pending(&self, trade_record: &TradeRecord) {
+        match trade_record.action {
+            TradeAction::List => {
+                self.handle_list_pending(trade_record).await;
             }
-            PendingTxAction::BuyAndRelist => {
-                self.handle_buy_and_relist_pending(pending_tx).await;
+            TradeAction::Delist => {
+                self.handle_delist_pending(trade_record).await;
             }
-            PendingTxAction::BuyAndDelist => {
-                self.handle_buy_and_delist_pending(pending_tx).await;
+            TradeAction::BuyAndRelist => {
+                self.handle_buy_and_relist_pending(trade_record).await;
             }
-            PendingTxAction::Delist => {
-                self.handle_delist_pending(pending_tx).await;
+            TradeAction::BuyAndDelist => {
+                self.handle_buy_and_delist_pending(trade_record).await;
+            }
+            TradeAction::Relist => {
+                // Relist is handled synchronously, should never reach here
+                tracing::warn!("Unexpected pending event for relist action");
             }
         }
     }
 
-    async fn handle_buy_and_relist_pending(&self, pending_tx: &PendingTx) {
-        let action_id = &pending_tx.tx_id;
-        let Some(buyer_address) = pending_tx.buyer_address.clone() else {
-            tracing::error!(
-                "Missing buyer_address for BuyAndRelist action: action_id={}, name={}",
-                action_id,
-                pending_tx.name
-            );
+    async fn handle_list_pending(&self, trade_record: &TradeRecord) {
+        let name = &trade_record.name;
+        let Some(price) = trade_record.price_sats else {
+            tracing::error!("Missing price_sats for List action: name={}", name);
             return;
         };
-        let Some(new_price_sats) = pending_tx.price_sats else {
-            tracing::error!(
-                "Missing price_sats for BuyAndRelist action: action_id={}, name={}",
-                action_id,
-                pending_tx.name
-            );
+        let Some(seller_address) = trade_record.seller_address.clone() else {
+            tracing::error!("Missing seller_address for List action: name={}", name);
             return;
         };
+        let tx_id = trade_record.tx_id.clone().unwrap_or_default();
+        let previous_price_sats = trade_record.previous_price_sats.unwrap_or(0);
 
-        let name = &pending_tx.name;
-        let mut previous_price_sats: u64 = 0;
-
-        // Update old listing to bought_and_relisted
-        if let Ok(Some(prev_listing)) = self.postgres.get_listed_listing_by_name(name).await {
-            previous_price_sats = prev_listing.price_sats;
-
-            match self
-                .postgres
-                .update_listing_to_bought_and_relisted(
-                    &prev_listing.id,
-                    &buyer_address,
-                    new_price_sats,
-                )
-                .await
-            {
-                Ok(_) => {
-                    tracing::info!("Updated listing {} to bought_and_relisted", name);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to update listing status: {:?}", e);
-                }
-            }
-
-            // Update sale rankings: recent_sales, most_traded, top_earners
-            self.update_sale_rankings(&prev_listing, &buyer_address)
-                .await;
-
-            // Remove from listing rankings (will be re-added with new price)
-            self.remove_listing_rankings(name).await;
-        }
-
-        // Create new listed record
         let now = Utc::now();
-        let new_listing = Listing {
-            id: Uuid::new_v4().to_string(),
+        let listing = Listing {
             name: name.clone(),
-            seller_address: buyer_address,
-            price_sats: new_price_sats,
-            status: ListingStatus::Listed,
+            seller_address,
+            price_sats: price,
             listed_at: now,
             updated_at: now,
-            previous_price_sats,
-            tx_id: action_id.to_string(),
-            buyer_address: None,
-            new_price_sats: None,
-            inscription_utxo_sats: pending_tx.inscription_utxo_sats,
+            tx_id,
+            inscription_utxo_sats: trade_record.inscription_utxo_sats,
         };
 
-        if let Err(e) = self.postgres.create_listing(&new_listing).await {
+        if let Err(e) = self.postgres.create_listing(&listing).await {
             tracing::error!("Failed to save listing for {}: {:?}", name, e);
         } else {
-            tracing::info!(
-                "Saved listing to PostgreSQL: name={}, tx_id={}",
-                name,
-                action_id
-            );
+            tracing::info!("Saved listing to PostgreSQL: name={}", name);
         }
 
-        //add points to seller's  primary key
-        self.add_seller_points(&pending_tx).await;
-
-        // Update listing rankings for the new listing
-        self.update_listing_rankings(&new_listing).await;
+        self.update_listing_rankings(&listing, previous_price_sats)
+            .await;
     }
 
-    //add points to seller's  primary name, if No primary name bound, do nothing.
-    pub async fn add_seller_points(&self, pending_tx: &PendingTx) {
-        if let Some(points) = pending_tx.platform_fee {
+    async fn handle_delist_pending(&self, trade_record: &TradeRecord) {
+        let name = &trade_record.name;
+
+        if let Err(e) = self.postgres.delete_listing_by_name(name).await {
+            tracing::error!("Failed to delete listing for delist {}: {:?}", name, e);
+        } else {
+            tracing::info!("Deleted listing {} from PostgreSQL (delist)", name);
+        }
+
+        self.remove_listing_rankings(name).await;
+    }
+
+    async fn handle_buy_and_relist_pending(&self, trade_record: &TradeRecord) {
+        let name = &trade_record.name;
+        let Some(buyer_address) = trade_record.buyer_address.clone() else {
+            tracing::error!("Missing buyer_address for BuyAndRelist: name={}", name);
+            return;
+        };
+        let Some(new_price_sats) = trade_record.price_sats else {
+            tracing::error!("Missing price_sats for BuyAndRelist: name={}", name);
+            return;
+        };
+        let tx_id = trade_record.tx_id.clone().unwrap_or_default();
+        let previous_price_sats = trade_record.previous_price_sats.unwrap_or(0);
+
+        // Get old listing for sale rankings before updating
+        let old_listing = self.postgres.get_listed_listing_by_name(name).await;
+
+        // Update listing: seller→buyer, price→new price, tx_id→new tx_id
+        if let Err(e) = self
+            .postgres
+            .update_listing_seller_price_tx(name, &buyer_address, new_price_sats, &tx_id)
+            .await
+        {
+            tracing::error!(
+                "Failed to update listing for buy_and_relist {}: {:?}",
+                name,
+                e
+            );
+        } else {
+            tracing::info!("Updated listing {} for buy_and_relist", name);
+        }
+
+        // Update sale rankings using old listing data
+        if let Ok(Some(prev_listing)) = old_listing {
+            self.update_sale_rankings(&prev_listing, &buyer_address)
+                .await;
+        }
+
+        // Remove old listing rankings and add new ones
+        self.remove_listing_rankings(name).await;
+
+        // Re-read the updated listing for new ranking data
+        if let Ok(Some(updated_listing)) = self.postgres.get_listed_listing_by_name(name).await {
+            self.update_listing_rankings(&updated_listing, previous_price_sats)
+                .await;
+        }
+
+        // Add seller points
+        self.add_seller_points(trade_record).await;
+    }
+
+    async fn handle_buy_and_delist_pending(&self, trade_record: &TradeRecord) {
+        let name = &trade_record.name;
+        let Some(buyer_address) = trade_record.buyer_address.clone() else {
+            tracing::error!("Missing buyer_address for BuyAndDelist: name={}", name);
+            return;
+        };
+
+        // Get old listing for sale rankings before deleting
+        if let Ok(Some(prev_listing)) = self.postgres.get_listed_listing_by_name(name).await {
+            // Update sale rankings
+            self.update_sale_rankings(&prev_listing, &buyer_address)
+                .await;
+        }
+
+        // Delete from listings
+        if let Err(e) = self.postgres.delete_listing_by_name(name).await {
+            tracing::error!(
+                "Failed to delete listing for buy_and_delist {}: {:?}",
+                name,
+                e
+            );
+        } else {
+            tracing::info!("Deleted listing {} from PostgreSQL (buy_and_delist)", name);
+        }
+
+        // Remove from listing rankings
+        self.remove_listing_rankings(name).await;
+
+        // Add seller points
+        self.add_seller_points(trade_record).await;
+    }
+
+    // ========================================================================
+    // Handle Rejected status - rollback listings changes
+    // ========================================================================
+
+    async fn handle_rejected(&self, trade_record: &TradeRecord) {
+        match trade_record.action {
+            TradeAction::List => {
+                self.handle_list_rejected(trade_record).await;
+            }
+            TradeAction::Delist => {
+                self.handle_delist_rejected(trade_record).await;
+            }
+            TradeAction::BuyAndRelist => {
+                self.handle_buy_and_relist_rejected(trade_record).await;
+            }
+            TradeAction::BuyAndDelist => {
+                self.handle_buy_and_delist_rejected(trade_record).await;
+            }
+            TradeAction::Relist => {
+                tracing::warn!("Unexpected rejected event for relist action");
+            }
+        }
+    }
+
+    /// list rejected: delete the listing that was added during pending
+    async fn handle_list_rejected(&self, trade_record: &TradeRecord) {
+        let name = &trade_record.name;
+
+        if let Err(e) = self.postgres.delete_listing_by_name(name).await {
+            tracing::error!("Failed to rollback list for {}: {:?}", name, e);
+        } else {
+            tracing::info!("Rolled back list for {} (rejected)", name);
+        }
+
+        self.remove_listing_rankings(name).await;
+    }
+
+    /// delist rejected: re-insert listing from trade_record data
+    async fn handle_delist_rejected(&self, trade_record: &TradeRecord) {
+        let name = &trade_record.name;
+        let seller_address = trade_record.seller_address.clone().unwrap_or_default();
+        let price_sats = trade_record.previous_price_sats.unwrap_or(0);
+        let previous_price_sats = trade_record.previous_price_sats.unwrap_or(0);
+        let tx_id = trade_record.tx_id.clone().unwrap_or_default();
+
+        let now = Utc::now();
+        let listing = Listing {
+            name: name.clone(),
+            seller_address,
+            price_sats,
+            listed_at: now,
+            updated_at: now,
+            tx_id,
+            inscription_utxo_sats: trade_record.inscription_utxo_sats,
+        };
+
+        if let Err(e) = self.postgres.create_listing(&listing).await {
+            tracing::error!("Failed to rollback delist for {}: {:?}", name, e);
+        } else {
+            tracing::info!("Rolled back delist for {} (rejected)", name);
+        }
+
+        self.update_listing_rankings(&listing, previous_price_sats)
+            .await;
+    }
+
+    /// buy_and_relist rejected: restore seller and price to before the buy
+    async fn handle_buy_and_relist_rejected(&self, trade_record: &TradeRecord) {
+        let name = &trade_record.name;
+        let original_seller = trade_record.seller_address.clone().unwrap_or_default();
+        let original_price = trade_record.previous_price_sats.unwrap_or(0);
+
+        // Restore the listing to the original seller and price
+        // We need to figure out the original tx_id - it's lost in the update.
+        // We'll use the trade_record's tx_id as fallback.
+        let original_tx_id = trade_record.tx_id.clone().unwrap_or_default();
+
+        if let Err(e) = self
+            .postgres
+            .update_listing_seller_price_tx(name, &original_seller, original_price, &original_tx_id)
+            .await
+        {
+            tracing::error!("Failed to rollback buy_and_relist for {}: {:?}", name, e);
+        } else {
+            tracing::info!("Rolled back buy_and_relist for {} (rejected)", name);
+        }
+
+        // Update rankings
+        self.remove_listing_rankings(name).await;
+        if let Ok(Some(listing)) = self.postgres.get_listed_listing_by_name(name).await {
+            self.update_listing_rankings(&listing, original_price).await;
+        }
+
+        // TODO: Also need to reverse sale rankings (recent-sales, top-earners, most-traded)
+        // For now, broadcast updates for all affected channels
+        self.broadcast(BroadcastEvent::RemoveNewListing(name.to_string()));
+    }
+
+    /// buy_and_delist rejected: re-insert listing from trade_record data
+    async fn handle_buy_and_delist_rejected(&self, trade_record: &TradeRecord) {
+        let name = &trade_record.name;
+        let seller_address = trade_record.seller_address.clone().unwrap_or_default();
+        let price_sats = trade_record.previous_price_sats.unwrap_or(0);
+        let previous_price_sats = trade_record.previous_price_sats.unwrap_or(0);
+        let tx_id = trade_record.tx_id.clone().unwrap_or_default();
+
+        let now = Utc::now();
+        let listing = Listing {
+            name: name.clone(),
+            seller_address,
+            price_sats,
+            listed_at: now,
+            updated_at: now,
+            tx_id,
+            inscription_utxo_sats: trade_record.inscription_utxo_sats,
+        };
+
+        if let Err(e) = self.postgres.create_listing(&listing).await {
+            tracing::error!("Failed to rollback buy_and_delist for {}: {:?}", name, e);
+        } else {
+            tracing::info!("Rolled back buy_and_delist for {} (rejected)", name);
+        }
+
+        self.update_listing_rankings(&listing, previous_price_sats)
+            .await;
+    }
+
+    // ========================================================================
+    // Ranking helpers
+    // ========================================================================
+
+    pub async fn add_seller_points(&self, trade_record: &TradeRecord) {
+        if let Some(points) = trade_record.platform_fee {
             let seller = self
                 .postgres
                 .get_user(
-                    pending_tx
+                    trade_record
                         .seller_address
                         .clone()
                         .unwrap_or_default()
@@ -352,7 +518,7 @@ impl EventService {
                     }
                 }
                 Ok(None) => {
-                    tracing::error!("User not found: {:?}", pending_tx.seller_address);
+                    tracing::error!("User not found: {:?}", trade_record.seller_address);
                 }
                 Err(e) => {
                     tracing::error!("Failed to retrieve seller address: {:?}", e);
@@ -361,19 +527,17 @@ impl EventService {
         }
     }
 
-    /// Update sale rankings: recent_sales, most_traded, top_earners
     async fn update_sale_rankings(&self, prev_listing: &Listing, buyer_address: &str) {
         let name = &prev_listing.name;
         let now = Utc::now();
 
-        // Get trade count for this name
         let trade_count = self
             .postgres
             .get_listing_traded_count(name)
             .await
             .unwrap_or(0) as u32;
 
-        // 1. recent_sales: score = sold_at
+        // 1. recent_sales
         let recent_sale_item = RecentSaleItem {
             name: name.clone(),
             price_sats: prev_listing.price_sats,
@@ -383,13 +547,10 @@ impl EventService {
         };
         if let Err(e) = self.redis.add_recent_sale(&recent_sale_item).await {
             tracing::error!("Failed to add {} to recent-sales ranking: {:?}", name, e);
-        } else {
-            tracing::info!("Added {} to recent-sales ranking", name);
         }
-        // Broadcast recent sale event
         self.broadcast(BroadcastEvent::RecentSale(recent_sale_item));
 
-        // 2. most_traded: score = trade_count
+        // 2. most_traded
         let most_traded_item = MostTradedItem {
             name: name.clone(),
             price_sats: prev_listing.price_sats,
@@ -400,13 +561,10 @@ impl EventService {
         };
         if let Err(e) = self.redis.add_most_traded(&most_traded_item).await {
             tracing::error!("Failed to add {} to most-traded ranking: {:?}", name, e);
-        } else {
-            tracing::info!("Added {} to most-traded ranking", name);
         }
-        // Broadcast most traded event
         self.broadcast(BroadcastEvent::MostTraded(most_traded_item));
 
-        // 3. top_earners: score = total_profit_sats
+        // 3. top_earners
         match self
             .postgres
             .get_top_earner(&prev_listing.seller_address)
@@ -425,11 +583,6 @@ impl EventService {
                         prev_listing.seller_address,
                         e
                     );
-                } else {
-                    tracing::info!(
-                        "Added {} to top-earners ranking",
-                        prev_listing.seller_address
-                    );
                 }
                 self.broadcast(BroadcastEvent::TopEarner(top_earner_item));
             }
@@ -439,9 +592,7 @@ impl EventService {
         }
     }
 
-    /// Remove a name from listing rankings: new_listings, top_sales, best_deals
     async fn remove_listing_rankings(&self, name: &str) {
-        // 1. Remove from new_listings
         if let Err(e) = self.redis.rem_new_listing(name).await {
             tracing::error!(
                 "Failed to remove {} from new-listings ranking: {:?}",
@@ -449,109 +600,70 @@ impl EventService {
                 e
             );
         }
-        // Broadcast removal from new-listings
         self.broadcast(BroadcastEvent::RemoveNewListing(name.to_string()));
 
-        // 2. Remove from top_sales
         if let Err(e) = self.redis.rem_top_sale(name).await {
             tracing::error!("Failed to remove {} from top-sales ranking: {:?}", name, e);
         }
-        // Broadcast removal from top-sales
         self.broadcast(BroadcastEvent::RemoveTopSale(name.to_string()));
 
-        // 3. Remove from best_deals
         if let Err(e) = self.redis.rem_best_deal(name).await {
             tracing::error!("Failed to remove {} from best-deals ranking: {:?}", name, e);
         }
-        // Broadcast removal from best-deals
         self.broadcast(BroadcastEvent::RemoveBestDeal(name.to_string()));
 
         tracing::info!("Removed {} from listing rankings", name);
     }
 
-    async fn handle_delist_pending(&self, pending_tx: &PendingTx) {
-        let name = &pending_tx.name;
+    pub async fn update_listing_rankings(&self, listing: &Listing, previous_price_sats: u64) {
+        let name = listing.name.as_str();
+        let price = listing.price_sats;
+        let seller_address = &listing.seller_address;
+        let listed_at = listing.listed_at.timestamp();
 
-        if let Ok(Some(prev_listing)) = self.postgres.get_listed_listing_by_name(name).await {
-            // Update to list
-            match self.postgres.update_listing_to_list(&prev_listing.id).await {
-                Ok(_) => {
-                    tracing::info!("Updated listing {} to delisted", name);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to update listing status: {:?}", e);
-                }
-            }
-            let now = Utc::now();
-            let new_delist = Listing {
-                id: Uuid::new_v4().to_string(),
-                name: prev_listing.name.clone(),
-                seller_address: prev_listing.seller_address.clone(),
-                price_sats: prev_listing.price_sats,
-                status: ListingStatus::Delisted,
-                listed_at: now,
-                updated_at: now,
-                previous_price_sats: prev_listing.previous_price_sats,
-                tx_id: pending_tx.tx_id.clone(),
-                buyer_address: None,
-                new_price_sats: None,
-                inscription_utxo_sats: pending_tx.inscription_utxo_sats.clone(),
-            };
-            match self.postgres.create_listing(&new_delist).await {
-                Ok(_) => {
-                    tracing::info!("add new delisted listing {}", name);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to create delisted listing: {:?}", e);
-                }
-            }
-            // Remove from listing rankings: new_listings, top_sales, best_deals
-            self.remove_listing_rankings(name).await;
-        }
-    }
+        let discount = crate::utils::calculate_discount(price, previous_price_sats);
 
-    async fn handle_buy_and_delist_pending(&self, pending_tx: &PendingTx) {
-        let action_id = &pending_tx.tx_id;
-        let Some(buyer_address) = pending_tx.buyer_address.clone() else {
-            tracing::error!(
-                "Missing buyer_address for BuyAndDelist action: action_id={}, name={}",
-                action_id,
-                pending_tx.name
-            );
-            return;
+        // 1. new_listings
+        let new_listing_item = NewListingItem {
+            name: name.to_string(),
+            price_sats: price,
+            listed_at,
+            discount,
+            seller_address: seller_address.clone(),
         };
-
-        let name = &pending_tx.name;
-
-        if let Ok(Some(prev_listing)) = self.postgres.get_listed_listing_by_name(name).await {
-            // Update to bought_and_delisted
-            match self
-                .postgres
-                .update_listing_to_bought_and_delisted(&prev_listing.id, &buyer_address)
-                .await
-            {
-                Ok(_) => {
-                    tracing::info!("Updated listing {} to bought_and_delisted", name);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to update listing status: {:?}", e);
-                }
-            }
-
-            // Update sale rankings: recent_sales, most_traded, top_earners
-            self.update_sale_rankings(&prev_listing, &buyer_address)
-                .await;
-
-            // Remove from listing rankings: new_listings, top_sales, best_deals
-            self.remove_listing_rankings(name).await;
-
-            //add points to seller's  primary key
-            self.add_seller_points(&pending_tx).await;
+        if let Err(e) = self.redis.add_new_listing(&new_listing_item).await {
+            tracing::error!("Failed to add {} to new-listings ranking: {:?}", name, e);
         }
+        self.broadcast(BroadcastEvent::NewListing(new_listing_item));
+
+        // 2. top_sales
+        let top_sale_item = TopSaleItem {
+            name: name.to_string(),
+            price_sats: price,
+            listed_at,
+            discount,
+            seller_address: seller_address.clone(),
+        };
+        if let Err(e) = self.redis.add_top_sale(&top_sale_item).await {
+            tracing::error!("Failed to add {} to top-sales ranking: {:?}", name, e);
+        }
+        self.broadcast(BroadcastEvent::TopSale(top_sale_item));
+
+        // 3. best_deals
+        let best_deal_item = BestDealItem {
+            name: name.to_string(),
+            price_sats: price,
+            listed_at,
+            discount,
+            seller_address: seller_address.clone(),
+        };
+        if let Err(e) = self.redis.add_best_deal(&best_deal_item).await {
+            tracing::error!("Failed to add {} to best-deals ranking: {:?}", name, e);
+        }
+        self.broadcast(BroadcastEvent::BestDeal(best_deal_item));
     }
 
     fn broadcast(&self, event: BroadcastEvent) {
-        // Broadcast to WebSocket subscribers
         match self.broadcast_tx.send(event.clone()) {
             Ok(receiver_count) => {
                 tracing::info!(
@@ -566,124 +678,7 @@ impl EventService {
         }
     }
 
-    async fn handle_list_pending(&self, pending_tx: &PendingTx) {
-        let action_id = &pending_tx.tx_id;
-        let name = pending_tx.name.as_str();
-        let Some(price) = pending_tx.price_sats else {
-            tracing::error!(
-                "Missing price_sats for List action: action_id={}, name={}",
-                action_id,
-                name
-            );
-            return;
-        };
-        let Some(seller_address) = pending_tx.seller_address.clone() else {
-            tracing::error!(
-                "Missing seller_address for List action: action_id={}, name={}",
-                action_id,
-                name
-            );
-            return;
-        };
-        // Use previous_price_sats from pending_tx (already calculated during list() call)
-        let previous_price_sats = pending_tx.previous_price_sats.unwrap_or(0);
-
-        let now = Utc::now();
-        let listing = Listing {
-            id: Uuid::new_v4().to_string(),
-            name: name.to_string(),
-            seller_address: seller_address.to_string(),
-            price_sats: price,
-            status: ListingStatus::Listed,
-            listed_at: now,
-            updated_at: now,
-            previous_price_sats,
-            tx_id: action_id.to_string(),
-            buyer_address: None,
-            new_price_sats: None,
-            inscription_utxo_sats: pending_tx.inscription_utxo_sats,
-        };
-
-        if let Err(e) = self.postgres.create_listing(&listing).await {
-            tracing::error!("Failed to save listing for {}: {:?}", name, e);
-        } else {
-            tracing::info!(
-                "Saved listing to PostgreSQL: name={}, tx_id={}",
-                name,
-                action_id
-            );
-        }
-
-        // Update rankings for new listing
-        self.update_listing_rankings(&listing).await;
-    }
-
-    /// Update rankings for a new/relisted listing: new_listings, top_sales, best_deals
-    pub async fn update_listing_rankings(&self, listing: &Listing) {
-        let name = listing.name.as_str();
-        let price = listing.price_sats;
-        let seller_address = &listing.seller_address;
-        let previous_price_sats = listing.previous_price_sats;
-        let listed_at = listing.listed_at.timestamp();
-
-        // Calculate discount using shared utility
-        let discount = crate::utils::calculate_discount(price, previous_price_sats);
-
-        // 1. new_listings: score = listed_at
-        let new_listing_item = NewListingItem {
-            name: name.to_string(),
-            price_sats: price,
-            listed_at,
-            discount,
-            seller_address: seller_address.clone(),
-        };
-        if let Err(e) = self.redis.add_new_listing(&new_listing_item).await {
-            tracing::error!("Failed to add {} to new-listings ranking: {:?}", name, e);
-        } else {
-            tracing::info!("Added {} to new-listings ranking", name);
-        }
-        // Broadcast new listing event
-        self.broadcast(BroadcastEvent::NewListing(new_listing_item));
-
-        // 2. top_sales: score = price_sats
-        let top_sale_item = TopSaleItem {
-            name: name.to_string(),
-            price_sats: price,
-            listed_at,
-            discount,
-            seller_address: seller_address.clone(),
-        };
-        if let Err(e) = self.redis.add_top_sale(&top_sale_item).await {
-            tracing::error!("Failed to add {} to top-sales ranking: {:?}", name, e);
-        } else {
-            tracing::info!("Added {} to top-sales ranking", name);
-        }
-        // Broadcast top sale event
-        self.broadcast(BroadcastEvent::TopSale(top_sale_item));
-
-        // 3. best_deals: score = discount
-        let best_deal_item = BestDealItem {
-            name: name.to_string(),
-            price_sats: price,
-            listed_at,
-            discount,
-            seller_address: seller_address.clone(),
-        };
-        if let Err(e) = self.redis.add_best_deal(&best_deal_item).await {
-            tracing::error!("Failed to add {} to best-deals ranking: {:?}", name, e);
-        } else {
-            tracing::info!("Added {} to best-deals ranking", name);
-        }
-        // Broadcast best deal event
-        self.broadcast(BroadcastEvent::BestDeal(best_deal_item));
-    }
-    /// Calculate initial previous_price_sats from etching tx fee
-    ///
-    /// Looks up the rune info, gets the etching tx, calculates fee, and returns fee * 10.
-    /// Used for first-time listings only.
-    /// Returns None if any step fails.
     pub async fn calculate_etching_fee_price(&self, name: &str) -> Option<u64> {
-        // Get rune info from Ord backend
         let rune_info = match self.blockchain.ord_bns_rune(name).await {
             Ok(Some(info)) => info,
             Ok(None) => {
@@ -696,7 +691,6 @@ impl EventService {
             }
         };
 
-        // Get etching tx id
         let etching_txid = match &rune_info.etching {
             Some(txid) => txid,
             None => {
@@ -705,7 +699,6 @@ impl EventService {
             }
         };
 
-        // Get fee from etching tx
         let fee_sats = match self.blockchain.get_tx_fee_sats(etching_txid).await {
             Ok(Some(fee)) => fee,
             Ok(None) => {

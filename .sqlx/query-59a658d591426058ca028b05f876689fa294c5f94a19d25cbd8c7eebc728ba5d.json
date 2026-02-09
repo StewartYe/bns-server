@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT COUNT(*) FROM listings WHERE seller_address=$1 or buyer_address=$1",
+  "query": "SELECT COUNT(*) FROM listings",
   "describe": {
     "columns": [
       {
@@ -10,13 +10,11 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Text"
-      ]
+      "Left": []
     },
     "nullable": [
       null
     ]
   },
-  "hash": "ec2003ab6ab919bca9735cd67718f2516d97e3b6c6e4b381c22257ac2ae824a8"
+  "hash": "59a658d591426058ca028b05f876689fa294c5f94a19d25cbd8c7eebc728ba5d"
 }

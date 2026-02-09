@@ -14,7 +14,6 @@ use bns_server::api::rankings::{
     BestDealItem, MostTradedItem, NewListingItem, RecentSaleItem, TopEarnerItem, TopSaleItem,
 };
 use bns_server::config::CONFIG;
-use bns_server::infra::ListingRow;
 use bns_server::service::{MarketingService, ShoutOutService, StarService};
 use bns_server::{
     api,
@@ -203,9 +202,10 @@ async fn rebuild_rankings_from_postgres(
     tracing::info!("Cleared all ranking ZSets");
 
     // Step 2: Rebuild new_listings, top_sales, best_deals from listed items
-    let listed_rows = sqlx::query_as!(ListingRow,
-        "SELECT id, name, seller_address, price_sats, status, listed_at, updated_at, previous_price_sats, tx_id, buyer_address, new_price_sats, inscription_utxo_sats
-         FROM listings WHERE status = 'listed' ORDER BY listed_at DESC",
+    let listed_rows = sqlx::query_as::<_, ListedRow>(
+        "SELECT l.name, l.seller_address, l.price_sats, l.listed_at, l.inscription_utxo_sats,
+                (SELECT th.previous_price_sats FROM trade_history th WHERE th.name = l.name AND th.action IN ('buy_and_relist', 'relist') ORDER BY th.created_at DESC LIMIT 1) as previous_price_sats
+         FROM listings l ORDER BY l.listed_at DESC",
     )
     .fetch_all(pool)
     .await?;
@@ -260,12 +260,13 @@ async fn rebuild_rankings_from_postgres(
         }
     }
 
-    // Step 3: Rebuild recent_sales from sold items
+    // Step 3: Rebuild recent_sales from sold items (from trade_history)
     let sold_rows = sqlx::query_as::<_, SoldRow>(
-        "SELECT l.name, l.price_sats, l.seller_address, l.buyer_address, l.updated_at
-         FROM listings l
-         WHERE l.status IN ('bought_and_relisted', 'bought_and_delisted')
-         ORDER BY l.updated_at DESC
+        "SELECT name, price_sats, seller_address, buyer_address, updated_at
+         FROM trade_history
+         WHERE action IN ('buy_and_relist', 'buy_and_delist')
+           AND status IN ('pending', 'finalized', 'confirmed')
+         ORDER BY updated_at DESC
          LIMIT 20",
     )
     .fetch_all(pool)
@@ -279,8 +280,8 @@ async fn rebuild_rankings_from_postgres(
     for row in &sold_rows {
         let recent_sale_item = RecentSaleItem {
             name: row.name.clone(),
-            price_sats: row.price_sats as u64,
-            seller_address: row.seller_address.clone(),
+            price_sats: row.price_sats.unwrap_or(0) as u64,
+            seller_address: row.seller_address.clone().unwrap_or_default(),
             buyer_address: row.buyer_address.clone().unwrap_or_default(),
             sold_at: row.updated_at.timestamp(),
         };
@@ -289,13 +290,14 @@ async fn rebuild_rankings_from_postgres(
         }
     }
 
-    // Step 4: Rebuild most_traded (count trades per name)
+    // Step 4: Rebuild most_traded (count trades per name, from trade_history)
     let most_traded_rows = sqlx::query_as::<_, MostTradedRow>(
         "SELECT name, COUNT(*) as trade_count, MAX(price_sats) as last_price_sats,
                 MAX(seller_address) as seller_address, MAX(buyer_address) as buyer_address,
                 MAX(updated_at) as last_traded_at
-         FROM listings
-         WHERE status IN ('bought_and_relisted', 'bought_and_delisted')
+         FROM trade_history
+         WHERE action IN ('buy_and_relist', 'buy_and_delist')
+           AND status IN ('pending', 'finalized', 'confirmed')
          GROUP BY name
          ORDER BY trade_count DESC
          LIMIT 20",
@@ -322,11 +324,12 @@ async fn rebuild_rankings_from_postgres(
         }
     }
 
-    // Step 5: Rebuild top_earners (sum earnings per seller)
+    // Step 5: Rebuild top_earners (sum earnings per seller, from trade_history)
     let top_earner_rows = sqlx::query_as::<_, TopEarnerRow>(
         "SELECT seller_address, SUM(price_sats)::BIGINT as total_earnings, COUNT(*) as trade_count
-         FROM listings
-         WHERE status IN ('bought_and_relisted', 'bought_and_delisted')
+         FROM trade_history
+         WHERE action IN ('buy_and_relist', 'buy_and_delist')
+           AND status IN ('pending', 'finalized', 'confirmed')
          GROUP BY seller_address
          ORDER BY total_earnings DESC
          LIMIT 20",
@@ -358,12 +361,24 @@ async fn rebuild_rankings_from_postgres(
     Ok(())
 }
 
-/// Database row for sold items (recent_sales)
+/// Database row for listed items (rebuild rankings)
+#[derive(Debug, sqlx::FromRow)]
+struct ListedRow {
+    name: String,
+    seller_address: String,
+    price_sats: i64,
+    listed_at: chrono::DateTime<chrono::Utc>,
+    #[allow(dead_code)]
+    inscription_utxo_sats: i64,
+    previous_price_sats: Option<i64>,
+}
+
+/// Database row for sold items (recent_sales, from trade_history)
 #[derive(Debug, sqlx::FromRow)]
 struct SoldRow {
     name: String,
-    price_sats: i64,
-    seller_address: String,
+    price_sats: Option<i64>,
+    seller_address: Option<String>,
     buyer_address: Option<String>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT COUNT(*) FROM listings WHERE status = 'listed'",
+  "query": "SELECT COUNT(*) FROM trade_history WHERE who = $1",
   "describe": {
     "columns": [
       {
@@ -10,11 +10,13 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text"
+      ]
     },
     "nullable": [
       null
     ]
   },
-  "hash": "d1f0c9712624fdf319e83ae95e79207d0eddb910dbd3e38e1333c0916446f7c3"
+  "hash": "43fd01aee903ad9d9ac5c1c5f512bfc2b225df6829b28c5af70c0084753c23c7"
 }
