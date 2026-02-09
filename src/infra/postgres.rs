@@ -75,6 +75,7 @@ pub trait PostgresClient: Send + Sync {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<TradeRecord>, u64)>;
+    async fn get_last_name_trade_record(&self, name: &str) -> Result<Option<TradeRecord>>;
     async fn get_listing_traded_count(&self, name: &str) -> Result<u64>;
     async fn get_last_bought_price(&self, name: &str) -> Result<Option<u64>>;
     async fn get_top_earner(&self, user_address: &str) -> Result<(i64, u32)>;
@@ -490,7 +491,16 @@ impl PostgresClient for PostgresClientImpl {
 
         Ok((rows.into_iter().map(Into::into).collect(), count))
     }
-
+    async fn get_last_name_trade_record(&self, name: &str) -> Result<Option<TradeRecord>> {
+        let rows = sqlx::query_as!(TradeHistoryRow,
+            "SELECT id, name, who, action, tx_id, created_at, updated_at, status, seller_address, previous_price_sats, price_sats, inscription_utxo_sats, buyer_address, platform_fee
+             FROM trade_history WHERE name = $1 ORDER BY created_at DESC LIMIT 1",
+            name
+        )
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(rows.map(Into::into))
+    }
     async fn get_listing_traded_count(&self, name: &str) -> Result<u64> {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM trade_history WHERE name = $1 AND action IN ('buy_and_relist', 'buy_and_delist')",

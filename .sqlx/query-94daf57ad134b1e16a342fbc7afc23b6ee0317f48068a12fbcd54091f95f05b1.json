@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT l.name, l.seller_address, l.price_sats, l.listed_at, l.inscription_utxo_sats,\n                (SELECT th.previous_price_sats FROM trade_history th WHERE th.name = l.name AND th.action IN ('buy_and_relist', 'relist') ORDER BY th.created_at DESC LIMIT 1) as previous_price_sats\n         FROM listings l ORDER BY l.listed_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "seller_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "price_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "listed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "inscription_utxo_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "previous_price_sats",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "94daf57ad134b1e16a342fbc7afc23b6ee0317f48068a12fbcd54091f95f05b1"
+}
