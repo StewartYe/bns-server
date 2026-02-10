@@ -713,8 +713,7 @@ impl PostgresClient for PostgresClientImpl {
     async fn get_last_n_shout_out(&self, n: u64) -> Result<Vec<ShoutOut>> {
         let shout_outs = sqlx::query_as!(
             ShoutOut,
-            "select * from shout_outs where status = $1 ORDER BY created_at desc  limit $2",
-            ShoutOutStatus::Confirmed.to_string(),
+            "select * from shout_outs ORDER BY created_at desc  limit $1",
             n as i64
         )
         .fetch_all(&self.pool)

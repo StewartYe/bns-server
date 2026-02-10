@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select * from shout_outs where status = $1 ORDER BY created_at desc  limit $2",
+  "query": "select * from shout_outs ORDER BY created_at desc  limit $1",
   "describe": {
     "columns": [
       {
@@ -46,7 +46,6 @@
     ],
     "parameters": {
       "Left": [
-        "Text",
         "Int8"
       ]
     },
@@ -61,5 +60,5 @@
       false
     ]
   },
-  "hash": "36caba479a28f67d5166cd7c8d6b5d0a7219e8852c7db5e414ebe5115fdf3771"
+  "hash": "0e796b23aaf90494a2df4daf14aa06ebeb0c888a3a74e9a3de2d80cb676d15ab"
 }
