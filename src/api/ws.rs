@@ -1,31 +1,26 @@
 //! WebSocket API for real-time updates
 //!
-//! Provides real-time delta updates via in-memory broadcast:
+//! Provides real-time updates via in-memory broadcast:
 //! - Connect to /v1/ws/connect
 //! - Send: {"type": "subscribe", "channel": "new-listings"}
-//! - Receive delta updates when new listings are added
-//!
-//! Delta message format (flattened):
-//! - op: "upsert" | "remove"
-//! - key: identifier (name for most channels, address for top-earners)
-//! - ts: unix timestamp in milliseconds
-//! - data: item data (only for upsert)
-//!
-//! For initial data snapshot, use GET /v1/rankings/{type}
+//! - Receive delta/update events by channel
 
 use axum::{
     extract::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
+    http::{HeaderMap, header},
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
+use crate::constants::SESSION_COOKIE_NAME;
 use crate::state::{AppState, BroadcastEvent};
 
 /// Subscription message from client
@@ -44,26 +39,56 @@ pub const VALID_CHANNELS: &[&str] = &[
     "most-traded",
     "top-sales",
     "best-deals",
+    "market-stats",
+    "user-self",
 ];
 
 fn is_valid_channel(channel: &str) -> bool {
     VALID_CHANNELS.contains(&channel)
 }
 
+fn is_auth_required_channel(channel: &str) -> bool {
+    channel == "user-self"
+}
+
 /// WebSocket handler - unified endpoint for all subscriptions
-pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
+pub async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let user_address = match extract_session_token(&headers) {
+        Some(token) => match state.auth_service.validate_session(token.as_str()).await {
+            Ok(Some(session)) => Some(session.btc_address),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!("Failed to validate session in websocket handshake: {:?}", e);
+                None
+            }
+        },
+        None => None,
+    };
+
+    ws.on_upgrade(move |socket| handle_ws(socket, state, user_address))
 }
 
 /// Handle WebSocket connection with broadcast channel
-async fn handle_ws(socket: WebSocket, state: AppState) {
+async fn handle_ws(socket: WebSocket, state: AppState, user_address: Option<String>) {
     let (sender, mut receiver) = socket.split();
     let sender = Arc::new(Mutex::new(sender));
     let subscriptions: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
     // Active broadcast listener tasks
-    let listener_tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    let listener_tasks: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
+    let counted_as_online = user_address.is_some();
+    if counted_as_online {
+        let total_online = state.online_users.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = state
+            .broadcast_tx
+            .send(BroadcastEvent::MarketOnlineUpdated { total_online });
+    }
 
     // Handle incoming messages
     while let Some(msg) = receiver.next().await {
@@ -101,6 +126,19 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 continue;
                             }
 
+                            if is_auth_required_channel(&sub_msg.channel) && user_address.is_none()
+                            {
+                                let ack = serde_json::json!({
+                                    "type": "error",
+                                    "message": "Channel user-self requires authentication"
+                                });
+                                let mut sender_guard = sender.lock().await;
+                                let _ = sender_guard
+                                    .send(Message::Text(ack.to_string().into()))
+                                    .await;
+                                continue;
+                            }
+
                             tracing::info!("Client subscribing to: {}", sub_msg.channel);
                             subs.insert(sub_msg.channel.clone());
                             drop(subs);
@@ -109,19 +147,21 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             let sender_clone = sender.clone();
                             let channel_name = sub_msg.channel.clone();
                             let broadcast_rx = state.broadcast_tx.subscribe();
+                            let user_address_clone = user_address.clone();
 
                             let listener_task = tokio::spawn(async move {
                                 run_broadcast_listener(
                                     broadcast_rx,
                                     channel_name.clone(),
                                     sender_clone,
+                                    user_address_clone,
                                 )
                                 .await;
                                 tracing::debug!("Broadcast listener for {} ended", channel_name);
                             });
 
                             let mut tasks = listener_tasks.lock().await;
-                            tasks.push(listener_task);
+                            tasks.insert(sub_msg.channel.clone(), listener_task);
 
                             // Send subscription confirmation
                             let ack = serde_json::json!({
@@ -143,6 +183,12 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                                 "type": "unsubscribed",
                                 "channel": sub_msg.channel
                             });
+
+                            let mut tasks = listener_tasks.lock().await;
+                            if let Some(task) = tasks.remove(&sub_msg.channel) {
+                                task.abort();
+                            }
+
                             drop(subs);
                             let mut sender_guard = sender.lock().await;
                             let _ = sender_guard
@@ -169,8 +215,15 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
 
     // Clean up - abort all listener tasks
     let tasks = listener_tasks.lock().await;
-    for task in tasks.iter() {
+    for task in tasks.values() {
         task.abort();
+    }
+
+    if counted_as_online {
+        let total_online = decrement_online_users(&state);
+        let _ = state
+            .broadcast_tx
+            .send(BroadcastEvent::MarketOnlineUpdated { total_online });
     }
 }
 
@@ -187,6 +240,7 @@ async fn run_broadcast_listener(
     mut broadcast_rx: tokio::sync::broadcast::Receiver<BroadcastEvent>,
     ws_channel: String,
     sender: Arc<Mutex<futures_util::stream::SplitSink<WebSocket, Message>>>,
+    user_address: Option<String>,
 ) {
     loop {
         match broadcast_rx.recv().await {
@@ -278,6 +332,105 @@ async fn run_broadcast_listener(
                             "key": name
                         }))
                     }
+                    (BroadcastEvent::MarketOnlineUpdated { total_online }, "market-stats") => {
+                        Some(serde_json::json!({
+                            "type": "update",
+                            "channel": "market-stats",
+                            "event": "online",
+                            "ts": ts,
+                            "data": {
+                                "totalOnline": total_online
+                            }
+                        }))
+                    }
+                    (
+                        BroadcastEvent::MarketListingsUpdated {
+                            listed_count,
+                            listed_value,
+                        },
+                        "market-stats",
+                    ) => Some(serde_json::json!({
+                        "type": "update",
+                        "channel": "market-stats",
+                        "event": "listings",
+                        "ts": ts,
+                        "data": {
+                            "listedCount": listed_count,
+                            "listedValue": listed_value
+                        }
+                    })),
+                    (
+                        BroadcastEvent::MarketTrades24hUpdated { txs_24h, vol_24h },
+                        "market-stats",
+                    ) => Some(serde_json::json!({
+                        "type": "update",
+                        "channel": "market-stats",
+                        "event": "trades24h",
+                        "ts": ts,
+                        "data": {
+                            "txs24h": txs_24h,
+                            "vol24h": vol_24h
+                        }
+                    })),
+                    (
+                        BroadcastEvent::UserInventory {
+                            user_address: event_user,
+                            inventory,
+                        },
+                        "user-self",
+                    ) if Some(event_user.as_str()) == user_address.as_deref() => {
+                        Some(serde_json::json!({
+                            "type": "update",
+                            "channel": "user-self",
+                            "event": "inventory",
+                            "ts": ts,
+                            "data": inventory
+                        }))
+                    }
+                    (
+                        BroadcastEvent::UserActivities {
+                            user_address: event_user,
+                            activities,
+                        },
+                        "user-self",
+                    ) if Some(event_user.as_str()) == user_address.as_deref() => {
+                        Some(serde_json::json!({
+                            "type": "update",
+                            "channel": "user-self",
+                            "event": "activities",
+                            "ts": ts,
+                            "data": activities
+                        }))
+                    }
+                    (
+                        BroadcastEvent::UserStars {
+                            user_address: event_user,
+                            op,
+                            star,
+                        },
+                        "user-self",
+                    ) if Some(event_user.as_str()) == user_address.as_deref() => {
+                        if op == "remove" {
+                            Some(serde_json::json!({
+                                "type": "delta",
+                                "channel": "user-self",
+                                "event": "stars",
+                                "ts": ts,
+                                "op": "remove",
+                                "key": star.target
+                            }))
+                        } else {
+                            Some(serde_json::json!({
+                                "type": "delta",
+                                "channel": "user-self",
+                                "event": "stars",
+                                "ts": ts,
+                                "op": "upsert",
+                                "key": star.target,
+                                "data": star
+                            }))
+                        }
+                    }
                     _ => None,
                 };
 
@@ -301,6 +454,39 @@ async fn run_broadcast_listener(
                 tracing::debug!("Broadcast channel closed");
                 break;
             }
+        }
+    }
+}
+
+fn extract_session_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(cookie_header) = headers.get(header::COOKIE) {
+        if let Ok(cookies_str) = cookie_header.to_str() {
+            for cookie in cookies_str.split(';') {
+                let cookie = cookie.trim();
+                if let Some(value) = cookie.strip_prefix(&format!("{}=", SESSION_COOKIE_NAME)) {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|v| v.to_string())
+}
+
+fn decrement_online_users(state: &AppState) -> u64 {
+    let mut current = state.online_users.load(Ordering::SeqCst);
+    loop {
+        let next = current.saturating_sub(1);
+        match state
+            .online_users
+            .compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => return next,
+            Err(actual) => current = actual,
         }
     }
 }

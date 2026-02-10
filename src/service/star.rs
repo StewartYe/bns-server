@@ -27,7 +27,7 @@ impl StarService {
         }
     }
 
-    pub async fn star(&self, user_address: &str, target: &str) -> crate::Result<()> {
+    pub async fn star(&self, user_address: &str, target: &str) -> crate::Result<StarResponse> {
         let target_type;
         if let Ok(addr) = bitcoin::Address::from_str(target) {
             if addr.is_valid_for_network(CONFIG.bitcoin_network()) {
@@ -44,7 +44,15 @@ impl StarService {
                 .ok_or_else(|| AppError::NotFound(format!("Name '{}' not found", target)))?;
             target_type = StarTargetType::Name;
         }
-        self.postgres.star(user_address, target, target_type).await
+        self.postgres
+            .star(user_address, target, target_type.clone())
+            .await?;
+
+        Ok(StarResponse {
+            user_address: user_address.to_string(),
+            target: target.to_string(),
+            target_type: target_type.to_string(),
+        })
     }
 
     pub async fn unstar(&self, user_address: &str, name: &str) -> crate::Result<()> {

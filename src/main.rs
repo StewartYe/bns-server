@@ -3,6 +3,7 @@
 //! Main entry point.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::broadcast;
@@ -106,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize and start event service for canister event polling
     // Create broadcast channel for real-time WebSocket updates
     let (broadcast_tx, _) = broadcast::channel::<BroadcastEvent>(256);
+    let online_users = Arc::new(AtomicU64::new(0));
 
     let event_service = Arc::new(EventService::new(
         ic_agent.clone(),
@@ -113,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
         postgres_client.clone(),
         blockchain_client.clone(),
         broadcast_tx.clone(),
+        user_service.clone(),
     ));
 
     // Initialize marketing service
@@ -120,6 +123,7 @@ async fn main() -> anyhow::Result<()> {
         postgres_client.clone(),
         redis_client.clone(),
         user_service.clone(),
+        online_users.clone(),
     ));
 
     // Initialize trading service
@@ -159,6 +163,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         ic_agent,
         broadcast_tx,
+        online_users,
     );
 
     // Build router

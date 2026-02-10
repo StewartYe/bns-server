@@ -10,9 +10,10 @@ use std::time::Duration;
 use crate::api::rankings::{
     BestDealItem, MostTradedItem, NewListingItem, RecentSaleItem, TopEarnerItem, TopSaleItem,
 };
-use crate::domain::{Listing, TradeAction, TradeRecord, TradeStatus};
+use crate::domain::{Listing, TradeAction, TradeHistoryItem, TradeRecord, TradeStatus};
 use crate::infra::bns_canister::{BnsCanisterEvent, ReeActionStatus};
 use crate::infra::{DynBlockchainClient, DynPostgresClient, DynRedisClient, IcAgent};
+use crate::service::DynUserService;
 use crate::state::BroadcastEvent;
 use crate::{GLOBAL_MIN_PRICE, INIT_MAX_PRICE};
 use chrono::Utc;
@@ -27,6 +28,7 @@ pub struct EventService {
     blockchain: DynBlockchainClient,
     poll_interval: Duration,
     broadcast_tx: broadcast::Sender<BroadcastEvent>,
+    user_service: DynUserService,
 }
 
 impl EventService {
@@ -36,6 +38,7 @@ impl EventService {
         postgres: DynPostgresClient,
         blockchain: DynBlockchainClient,
         broadcast_tx: broadcast::Sender<BroadcastEvent>,
+        user_service: DynUserService,
     ) -> Self {
         Self {
             ic_agent,
@@ -44,6 +47,7 @@ impl EventService {
             blockchain,
             poll_interval: Duration::from_secs(60),
             broadcast_tx,
+            user_service,
         }
     }
 
@@ -268,6 +272,8 @@ impl EventService {
 
         self.update_listing_rankings(&listing, previous_price_sats)
             .await;
+
+        self.broadcast_trade_updates(trade_record, false).await;
     }
 
     async fn handle_delist_pending(&self, trade_record: &TradeRecord) {
@@ -280,6 +286,8 @@ impl EventService {
         }
 
         self.remove_listing_rankings(name).await;
+
+        self.broadcast_trade_updates(trade_record, false).await;
     }
 
     async fn handle_buy_and_relist_pending(&self, trade_record: &TradeRecord) {
@@ -330,6 +338,8 @@ impl EventService {
 
         // Add seller points
         self.add_seller_points(trade_record).await;
+
+        self.broadcast_trade_updates(trade_record, true).await;
     }
 
     async fn handle_buy_and_delist_pending(&self, trade_record: &TradeRecord) {
@@ -362,6 +372,88 @@ impl EventService {
 
         // Add seller points
         self.add_seller_points(trade_record).await;
+
+        self.broadcast_trade_updates(trade_record, true).await;
+    }
+
+    pub async fn broadcast_relist_updates(&self, trade_record: &TradeRecord) {
+        self.broadcast_market_listings().await;
+        self.broadcast_user_inventories(trade_record).await;
+        self.broadcast_user_activities(trade_record).await;
+    }
+
+    async fn broadcast_trade_updates(&self, trade_record: &TradeRecord, include_24h_trade: bool) {
+        self.broadcast_market_listings().await;
+        if include_24h_trade {
+            self.broadcast_market_trades_24h().await;
+        }
+        self.broadcast_user_inventories(trade_record).await;
+        self.broadcast_user_activities(trade_record).await;
+    }
+
+    async fn broadcast_market_listings(&self) {
+        match self.postgres.get_listing_count_and_valuation().await {
+            Ok((listed_count, listed_value)) => {
+                self.broadcast(BroadcastEvent::MarketListingsUpdated {
+                    listed_count,
+                    listed_value,
+                });
+            }
+            Err(e) => {
+                tracing::error!("Failed to query listing stats: {:?}", e);
+            }
+        }
+    }
+
+    async fn broadcast_market_trades_24h(&self) {
+        match self.postgres.get_24h_tx_vol().await {
+            Ok((txs_24h, vol_24h)) => {
+                self.broadcast(BroadcastEvent::MarketTrades24hUpdated { txs_24h, vol_24h });
+            }
+            Err(e) => {
+                tracing::error!("Failed to query 24h market stats: {:?}", e);
+            }
+        }
+    }
+
+    async fn broadcast_user_inventories(&self, trade_record: &TradeRecord) {
+        let mut users = std::collections::HashSet::new();
+        users.insert(trade_record.who.clone());
+        if let Some(seller_address) = &trade_record.seller_address {
+            users.insert(seller_address.clone());
+        }
+        if let Some(buyer_address) = &trade_record.buyer_address {
+            users.insert(buyer_address.clone());
+        }
+
+        for user in users {
+            match self.user_service.get_inventory(&user).await {
+                Ok(inventory) => {
+                    self.broadcast(BroadcastEvent::UserInventory {
+                        user_address: user.clone(),
+                        inventory,
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get inventory for {}: {:?}", user, e);
+                }
+            }
+        }
+    }
+
+    async fn broadcast_user_activities(&self, trade_record: &TradeRecord) {
+        let activity = TradeHistoryItem {
+            id: trade_record.id.clone(),
+            name: trade_record.name.clone(),
+            action: trade_record.action.to_string(),
+            price_sats: trade_record.price_sats,
+            status: trade_record.status.to_string(),
+            time: trade_record.created_at,
+        };
+        self.broadcast(BroadcastEvent::UserActivities {
+            user_address: trade_record.who.clone(),
+            activities: vec![activity],
+        });
     }
 
     // ========================================================================

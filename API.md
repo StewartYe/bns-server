@@ -38,7 +38,7 @@ Base URL: `https://bns-server-testnet-219952077564.us-central1.run.app`
 - [Rankings](#rankings)
   - [Get Ranking](#get-ranking)
 - [Marketing](#marketing)
-  - [Get Marketing Info](#get-marketing-infp)
+  - [Get Marketing Info](#get-marketing-info)
 - [WebSocket](#websocket)
   - [Architecture](#architecture)
   - [Connection](#connection)
@@ -1170,7 +1170,7 @@ Get the initial snapshot of a ranking.
 curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/rankings/new-listings
 ```
 
-**Response (new-listings):**
+**Response:**
 
 ```json
 {
@@ -1289,12 +1289,12 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/marketing
 
 ```json
 {
-  "total_users": 10000,
-  "total_online": 1000,
-  "total_listings": 1222,
-  "txs_24h": 222,
-  "vol_24h": 1202020,
-  "valuation": 102020202
+  "totalUsers": 10000,
+  "totalOnline": 1000,
+  "listedCount": 1222,
+  "txs24h": 222,
+  "vol24h": 1202020,
+  "listedValue": 102020202
 }
 ```
 
@@ -1302,11 +1302,14 @@ curl https://bns-server-testnet-219952077564.us-central1.run.app/v1/marketing
 ---
 ## WebSocket
 
-Real-time delta updates for rankings via in-memory broadcast.
+Real-time updates over channels:
+- Ranking channels use `delta` messages
+- `market-stats` uses `update` messages
+- `user-self` uses `update` and `delta` messages (authenticated users only)
 
 ### Architecture
 
-The WebSocket system uses a **snapshot + delta** pattern:
+For ranking channels, use **snapshot + delta**:
 
 1. **Initial Snapshot**: Use `GET /v1/rankings/{type}` to get the full initial data (max 20 items)
 2. **Delta Updates**: Subscribe to WebSocket channel to receive real-time updates
@@ -1318,6 +1321,10 @@ When receiving a delta update:
 ### Connection
 
 **Endpoint:** `wss://bns-server-testnet-219952077564.us-central1.run.app/v1/ws/connect`
+
+`user-self` authentication (during WebSocket handshake):
+- Cookie: `bns_session=...`
+- Header: `Authorization: Bearer <session_id>`
 
 ### Subscription Model
 
@@ -1337,27 +1344,49 @@ Clients must explicitly subscribe to channels to receive updates.
 
 ### Channels
 
-| Channel | Description | Key Field |
-|---------|-------------|-----------|
-| `new-listings` | Delta updates when new listings are added | `name` |
-| `recent-sales` | Delta updates when sales occur | `name` |
-| `top-earners` | Delta updates for top earner rankings | `address` |
-| `most-traded` | Delta updates for most traded names | `name` |
-| `top-sales` | Delta updates for highest sales | `name` |
-| `best-deals` | Delta updates for best deal listings | `name` |
+| Channel | Auth | Description |
+|---------|------|-------------|
+| `new-listings` | No | Ranking delta |
+| `recent-sales` | No | Ranking delta |
+| `top-earners` | No | Ranking delta |
+| `most-traded` | No | Ranking delta |
+| `top-sales` | No | Ranking delta |
+| `best-deals` | No | Ranking delta |
+| `market-stats` | No | Market facts updates (`online`, `listings`, `trades24h`) |
+| `user-self` | Yes | Current user updates (`inventory`, `activities`, `stars`) |
+
+### Trigger Rules
+
+- Authenticated WebSocket connect/disconnect -> `market-stats/online`
+- `list`, `delist`, `buy_and_delist`, `buy_and_relist` becomes `pending` -> `market-stats/listings`
+- `buy_and_delist`, `buy_and_relist` becomes `pending` -> `market-stats/trades24h`
+- `relist` succeeds -> `market-stats/listings`
+- `list`, `delist`, `buy_and_delist`, `buy_and_relist` becomes `pending` -> `user-self/inventory` + `user-self/activities`
+- `relist` succeeds -> `user-self/inventory` + `user-self/activities`
+- `star` / `unstar` -> `user-self/stars` (`upsert` / `remove`)
 
 ### Message Format
 
-All delta messages use a flattened structure with unified operation semantics:
+Ranking delta message:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Always `"delta"` |
+| `type` | string | `"delta"` |
 | `channel` | string | Channel name |
 | `ts` | number | Unix timestamp in milliseconds |
 | `op` | string | Operation: `"upsert"` or `"remove"` |
 | `key` | string | Unique identifier (name or address) |
 | `data` | object | Item data (only present for `upsert`) |
+
+Update message (`market-stats`/`user-self`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | `"update"` |
+| `channel` | string | Channel name |
+| `event` | string | Event name |
+| `ts` | number | Unix timestamp in milliseconds |
+| `data` | object/array | Event payload |
 
 ### Message Types
 
@@ -1365,6 +1394,12 @@ All delta messages use a flattened structure with unified operation semantics:
 
 ```json
 {"type": "subscribed", "channel": "new-listings"}
+```
+
+**Subscription Confirmation (user-self):**
+
+```json
+{"type": "subscribed", "channel": "user-self"}
 ```
 
 **Unsubscription Confirmation:**
@@ -1524,6 +1559,122 @@ Sent when a listing is removed (sold or delisted).
 }
 ```
 
+**Update (market-stats / online):**
+
+```json
+{
+  "type": "update",
+  "channel": "market-stats",
+  "event": "online",
+  "ts": 1735344000123,
+  "data": {
+    "totalOnline": 123
+  }
+}
+```
+
+**Update (market-stats / listings):**
+
+```json
+{
+  "type": "update",
+  "channel": "market-stats",
+  "event": "listings",
+  "ts": 1735344000123,
+  "data": {
+    "listedCount": 2000,
+    "listedValue": 888000000
+  }
+}
+```
+
+**Update (market-stats / trades24h):**
+
+```json
+{
+  "type": "update",
+  "channel": "market-stats",
+  "event": "trades24h",
+  "ts": 1735344000123,
+  "data": {
+    "txs24h": 120,
+    "vol24h": 33000000
+  }
+}
+```
+
+**Update (user-self / inventory):**
+
+```json
+{
+  "type": "update",
+  "channel": "user-self",
+  "event": "inventory",
+  "ts": 1735344000123,
+  "data": {
+    "address": "tb1q...",
+    "listed": ["AAA", "BBB"],
+    "unlisted": ["CCC"],
+    "listedCount": 2,
+    "unlistedCount": 1,
+    "totalListedValueSats": 900000,
+    "globalRank": 0
+  }
+}
+```
+
+**Update (user-self / activities):**
+
+```json
+{
+  "type": "update",
+  "channel": "user-self",
+  "event": "activities",
+  "ts": 1735344000123,
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "AAA",
+      "action": "buy_and_relist",
+      "priceSats": 100000,
+      "status": "pending",
+      "time": "2026-02-10T01:02:03Z"
+    }
+  ]
+}
+```
+
+**Delta (user-self / stars upsert):**
+
+```json
+{
+  "type": "delta",
+  "channel": "user-self",
+  "event": "stars",
+  "ts": 1735344000123,
+  "op": "upsert",
+  "key": "AAA",
+  "data": {
+    "user_address": "tb1q...",
+    "target": "AAA",
+    "target_type": "name"
+  }
+}
+```
+
+**Delta (user-self / stars remove):**
+
+```json
+{
+  "type": "delta",
+  "channel": "user-self",
+  "event": "stars",
+  "ts": 1735344000123,
+  "op": "remove",
+  "key": "AAA"
+}
+```
+
 **Error:**
 
 ```json
@@ -1532,6 +1683,10 @@ Sent when a listing is removed (sold or delisted).
 
 ```json
 {"type": "error", "message": "Already subscribed to new-listings"}
+```
+
+```json
+{"type": "error", "message": "Channel user-self requires authentication"}
 ```
 
 ---
