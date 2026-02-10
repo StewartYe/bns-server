@@ -316,6 +316,10 @@ impl TradingService {
                 .await;
         }
 
+        self.event_service
+            .broadcast_relist_updates(&trade_record)
+            .await;
+
         Ok(RelistResponse {
             name: request.name.clone(),
             new_price: request.new_price,

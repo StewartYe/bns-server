@@ -7,6 +7,7 @@
 
 use crate::AppState;
 use crate::domain::{StarResponse, UserSession};
+use crate::state::BroadcastEvent;
 use axum::extract::{Path, State};
 use axum::{Extension, Json};
 
@@ -24,10 +25,15 @@ pub async fn star(
     Extension(session): Extension<UserSession>,
     Path(target): Path<String>,
 ) -> crate::Result<()> {
-    state
+    let star = state
         .star_service
         .star(session.btc_address.as_str(), target.as_str())
         .await?;
+    let _ = state.broadcast_tx.send(BroadcastEvent::UserStars {
+        user_address: session.btc_address.clone(),
+        op: "upsert".to_string(),
+        star,
+    });
     Ok(())
 }
 
@@ -46,6 +52,16 @@ pub async fn unstar(
         .star_service
         .unstar(session.btc_address.as_str(), target.as_str())
         .await?;
+
+    let _ = state.broadcast_tx.send(BroadcastEvent::UserStars {
+        user_address: session.btc_address.clone(),
+        op: "remove".to_string(),
+        star: StarResponse {
+            user_address: session.btc_address,
+            target,
+            target_type: String::new(),
+        },
+    });
     Ok(())
 }
 

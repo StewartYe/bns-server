@@ -3,11 +3,13 @@
 //! Shared state accessible from all handlers.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use crate::api::rankings::{
     BestDealItem, MostTradedItem, NewListingItem, RecentSaleItem, TopEarnerItem, TopSaleItem,
 };
 use crate::config::Config;
+use crate::domain::{StarResponse, TradeHistoryItem, UserInventory};
 use crate::infra::{DynPostgresClient, DynRedisClient, IcAgent};
 use crate::service::{
     DynAuthService, DynMarketingService, DynNameService, DynShoutOutService, DynStarService,
@@ -36,6 +38,31 @@ pub enum BroadcastEvent {
     RemoveTopSale(String),
     /// Remove from best_deals ranking
     RemoveBestDeal(String),
+    /// Market online users changed
+    MarketOnlineUpdated { total_online: u64 },
+    /// Market listing count/value changed
+    MarketListingsUpdated {
+        listed_count: u64,
+        listed_value: u64,
+    },
+    /// Market 24h trades/volume changed
+    MarketTrades24hUpdated { txs_24h: u64, vol_24h: u64 },
+    /// User inventory changed
+    UserInventory {
+        user_address: String,
+        inventory: UserInventory,
+    },
+    /// User new activities
+    UserActivities {
+        user_address: String,
+        activities: Vec<TradeHistoryItem>,
+    },
+    /// User stars changed
+    UserStars {
+        user_address: String,
+        op: String,
+        star: StarResponse,
+    },
 }
 
 /// Application state shared across handlers
@@ -78,6 +105,9 @@ pub struct AppState {
 
     /// Broadcast channel for real-time WebSocket updates
     pub broadcast_tx: broadcast::Sender<BroadcastEvent>,
+
+    /// Online authenticated WebSocket connections
+    pub online_users: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -96,6 +126,7 @@ impl AppState {
         db_pool: sqlx::PgPool,
         ic_agent: Arc<IcAgent>,
         broadcast_tx: broadcast::Sender<BroadcastEvent>,
+        online_users: Arc<AtomicU64>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -111,6 +142,7 @@ impl AppState {
             db_pool,
             ic_agent,
             broadcast_tx,
+            online_users,
         }
     }
 }
