@@ -10,7 +10,6 @@ use axum::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, header},
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -20,15 +19,17 @@ use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-use crate::constants::SESSION_COOKIE_NAME;
 use crate::state::{AppState, BroadcastEvent};
 
-/// Subscription message from client
+/// Client-to-server WebSocket message
 #[derive(Debug, serde::Deserialize)]
-struct SubscriptionMessage {
+struct ClientMessage {
     #[serde(rename = "type")]
     msg_type: String,
+    #[serde(default)]
     channel: String,
+    #[serde(default)]
+    token: String,
 }
 
 /// Valid channel names for subscription
@@ -52,28 +53,12 @@ fn is_auth_required_channel(channel: &str) -> bool {
 }
 
 /// WebSocket handler - unified endpoint for all subscriptions
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let user_address = match extract_session_token(&headers) {
-        Some(token) => match state.auth_service.validate_session(token.as_str()).await {
-            Ok(Some(session)) => Some(session.btc_address),
-            Ok(None) => None,
-            Err(e) => {
-                tracing::warn!("Failed to validate session in websocket handshake: {:?}", e);
-                None
-            }
-        },
-        None => None,
-    };
-
-    ws.on_upgrade(move |socket| handle_ws(socket, state, user_address))
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
 /// Handle WebSocket connection with broadcast channel
-async fn handle_ws(socket: WebSocket, state: AppState, user_address: Option<String>) {
+async fn handle_ws(socket: WebSocket, state: AppState) {
     let (sender, mut receiver) = socket.split();
     let sender = Arc::new(Mutex::new(sender));
     let subscriptions: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
@@ -82,29 +67,24 @@ async fn handle_ws(socket: WebSocket, state: AppState, user_address: Option<Stri
     let listener_tasks: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
-    let counted_as_online = user_address.is_some();
-    if counted_as_online {
-        let total_online = state.online_users.fetch_add(1, Ordering::SeqCst) + 1;
-        let _ = state
-            .broadcast_tx
-            .send(BroadcastEvent::MarketOnlineUpdated { total_online });
-    }
+    // user_address is set via token in user-self subscribe message
+    let mut user_address: Option<String> = None;
+    let mut counted_as_online = false;
 
     // Handle incoming messages
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(Message::Text(text)) => {
-                // Parse subscription message
-                if let Ok(sub_msg) = serde_json::from_str::<SubscriptionMessage>(&text) {
-                    match sub_msg.msg_type.as_str() {
+                if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
+                    match client_msg.msg_type.as_str() {
                         "subscribe" => {
                             let mut subs = subscriptions.lock().await;
 
                             // Check if already subscribed
-                            if subs.contains(&sub_msg.channel) {
+                            if subs.contains(&client_msg.channel) {
                                 let ack = serde_json::json!({
                                     "type": "error",
-                                    "message": format!("Already subscribed to {}", sub_msg.channel)
+                                    "message": format!("Already subscribed to {}", client_msg.channel)
                                 });
                                 let mut sender_guard = sender.lock().await;
                                 let _ = sender_guard
@@ -114,10 +94,10 @@ async fn handle_ws(socket: WebSocket, state: AppState, user_address: Option<Stri
                             }
 
                             // Validate channel name
-                            if !is_valid_channel(&sub_msg.channel) {
+                            if !is_valid_channel(&client_msg.channel) {
                                 let ack = serde_json::json!({
                                     "type": "error",
-                                    "message": format!("Unknown channel: {}", sub_msg.channel)
+                                    "message": format!("Unknown channel: {}", client_msg.channel)
                                 });
                                 let mut sender_guard = sender.lock().await;
                                 let _ = sender_guard
@@ -126,26 +106,54 @@ async fn handle_ws(socket: WebSocket, state: AppState, user_address: Option<Stri
                                 continue;
                             }
 
-                            if is_auth_required_channel(&sub_msg.channel) && user_address.is_none()
-                            {
-                                let ack = serde_json::json!({
-                                    "type": "error",
-                                    "message": "Channel user-self requires authentication"
-                                });
-                                let mut sender_guard = sender.lock().await;
-                                let _ = sender_guard
-                                    .send(Message::Text(ack.to_string().into()))
-                                    .await;
-                                continue;
+                            // user-self requires authentication via token in message
+                            if is_auth_required_channel(&client_msg.channel) {
+                                if user_address.is_none() && !client_msg.token.is_empty() {
+                                    match state
+                                        .auth_service
+                                        .validate_session(&client_msg.token)
+                                        .await
+                                    {
+                                        Ok(Some(session)) => {
+                                            user_address = Some(session.btc_address);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                if user_address.is_none() {
+                                    let ack = serde_json::json!({
+                                        "type": "error",
+                                        "message": "Channel user-self requires authentication. Send: {\"type\":\"subscribe\",\"channel\":\"user-self\",\"token\":\"<session>\"}"
+                                    });
+                                    let mut sender_guard = sender.lock().await;
+                                    let _ = sender_guard
+                                        .send(Message::Text(ack.to_string().into()))
+                                        .await;
+                                    continue;
+                                }
+                                // Count as online when subscribing to user-self
+                                if !counted_as_online {
+                                    counted_as_online = true;
+                                    let total_online =
+                                        state.online_users.fetch_add(1, Ordering::SeqCst) + 1;
+                                    let _ = state
+                                        .broadcast_tx
+                                        .send(BroadcastEvent::MarketOnlineUpdated { total_online });
+                                    tracing::info!(
+                                        "User {} subscribed to user-self, online: {}",
+                                        user_address.as_deref().unwrap_or("?"),
+                                        total_online
+                                    );
+                                }
                             }
 
-                            tracing::info!("Client subscribing to: {}", sub_msg.channel);
-                            subs.insert(sub_msg.channel.clone());
+                            tracing::info!("Client subscribing to: {}", client_msg.channel);
+                            subs.insert(client_msg.channel.clone());
                             drop(subs);
 
                             // Start broadcast listener for this channel
                             let sender_clone = sender.clone();
-                            let channel_name = sub_msg.channel.clone();
+                            let channel_name = client_msg.channel.clone();
                             let broadcast_rx = state.broadcast_tx.subscribe();
                             let user_address_clone = user_address.clone();
 
@@ -161,12 +169,12 @@ async fn handle_ws(socket: WebSocket, state: AppState, user_address: Option<Stri
                             });
 
                             let mut tasks = listener_tasks.lock().await;
-                            tasks.insert(sub_msg.channel.clone(), listener_task);
+                            tasks.insert(client_msg.channel.clone(), listener_task);
 
                             // Send subscription confirmation
                             let ack = serde_json::json!({
                                 "type": "subscribed",
-                                "channel": sub_msg.channel
+                                "channel": client_msg.channel
                             });
                             let mut sender_guard = sender.lock().await;
                             let _ = sender_guard
@@ -174,18 +182,27 @@ async fn handle_ws(socket: WebSocket, state: AppState, user_address: Option<Stri
                                 .await;
                         }
                         "unsubscribe" => {
-                            tracing::info!("Client unsubscribed from: {}", sub_msg.channel);
+                            tracing::info!("Client unsubscribed from: {}", client_msg.channel);
                             let mut subs = subscriptions.lock().await;
-                            subs.remove(&sub_msg.channel);
+                            subs.remove(&client_msg.channel);
+
+                            // Decrement online count when unsubscribing from user-self
+                            if client_msg.channel == "user-self" && counted_as_online {
+                                counted_as_online = false;
+                                let total_online = decrement_online_users(&state);
+                                let _ = state
+                                    .broadcast_tx
+                                    .send(BroadcastEvent::MarketOnlineUpdated { total_online });
+                            }
 
                             // Send unsubscribe confirmation
                             let ack = serde_json::json!({
                                 "type": "unsubscribed",
-                                "channel": sub_msg.channel
+                                "channel": client_msg.channel
                             });
 
                             let mut tasks = listener_tasks.lock().await;
-                            if let Some(task) = tasks.remove(&sub_msg.channel) {
+                            if let Some(task) = tasks.remove(&client_msg.channel) {
                                 task.abort();
                             }
 
@@ -196,7 +213,7 @@ async fn handle_ws(socket: WebSocket, state: AppState, user_address: Option<Stri
                                 .await;
                         }
                         _ => {
-                            tracing::debug!("Unknown message type: {}", sub_msg.msg_type);
+                            tracing::debug!("Unknown message type: {}", client_msg.msg_type);
                         }
                     }
                 }
@@ -456,25 +473,6 @@ async fn run_broadcast_listener(
             }
         }
     }
-}
-
-fn extract_session_token(headers: &HeaderMap) -> Option<String> {
-    if let Some(cookie_header) = headers.get(header::COOKIE) {
-        if let Ok(cookies_str) = cookie_header.to_str() {
-            for cookie in cookies_str.split(';') {
-                let cookie = cookie.trim();
-                if let Some(value) = cookie.strip_prefix(&format!("{}=", SESSION_COOKIE_NAME)) {
-                    return Some(value.to_string());
-                }
-            }
-        }
-    }
-
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|v| v.to_string())
 }
 
 fn decrement_online_users(state: &AppState) -> u64 {

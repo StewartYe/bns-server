@@ -476,8 +476,12 @@ impl EventService {
             }
             TradeAction::Relist => {
                 tracing::warn!("Unexpected rejected event for relist action");
+                return;
             }
         }
+
+        // Broadcast market-stat and user-self updates after rollback
+        self.broadcast_trade_updates(trade_record, false).await;
     }
 
     /// list rejected: delete the listing that was added during pending

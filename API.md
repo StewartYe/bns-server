@@ -1322,9 +1322,7 @@ When receiving a delta update:
 
 **Endpoint:** `wss://bns-server-testnet-219952077564.us-central1.run.app/v1/ws/connect`
 
-`user-self` authentication (during WebSocket handshake):
-- Cookie: `bns_session=...`
-- Header: `Authorization: Bearer <session_id>`
+`user-self` authentication: include `token` (session_id) in the subscribe message.
 
 ### Subscription Model
 
@@ -1335,6 +1333,14 @@ Clients must explicitly subscribe to channels to receive updates.
 ```json
 {"type": "subscribe", "channel": "new-listings"}
 ```
+
+**Subscribe (user-self, with token):**
+
+```json
+{"type": "subscribe", "channel": "user-self", "token": "<session_id>"}
+```
+
+The `token` is the `session_id` returned by `POST /v1/auth/verify`.
 
 **Unsubscribe:**
 
@@ -1357,7 +1363,7 @@ Clients must explicitly subscribe to channels to receive updates.
 
 ### Trigger Rules
 
-- Authenticated WebSocket connect/disconnect -> `market-stats/online`
+- Subscribe/unsubscribe `user-self` (or disconnect) -> `market-stats/online`
 - `list`, `delist`, `buy_and_delist`, `buy_and_relist` becomes `pending` -> `market-stats/listings`
 - `buy_and_delist`, `buy_and_relist` becomes `pending` -> `market-stats/trades24h`
 - `relist` succeeds -> `market-stats/listings`
@@ -1686,7 +1692,7 @@ Sent when a listing is removed (sold or delisted).
 ```
 
 ```json
-{"type": "error", "message": "Channel user-self requires authentication"}
+{"type": "error", "message": "Channel user-self requires authentication. Send: {\"type\":\"subscribe\",\"channel\":\"user-self\",\"token\":\"<session>\"}"}
 ```
 
 ---

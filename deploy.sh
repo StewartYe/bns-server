@@ -55,7 +55,7 @@ gcloud run deploy ${SERVICE_NAME} \
     --cpu=1 \
     --memory=512Mi \
     --min-instances=0 \
-    --max-instances=10 \
+    --max-instances=1 \
     --allow-unauthenticated \
     --service-account=${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
     --project=${PROJECT_ID}
