@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT name, price_sats, seller_address, buyer_address, updated_at\n         FROM trade_history\n         WHERE action IN ('buy_and_relist', 'buy_and_delist')\n           AND status IN ('pending', 'finalized', 'confirmed')\n           AND updated_at >= NOW() - INTERVAL '24 hours'\n         ORDER BY price_sats DESC\n         LIMIT 20",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 1,
+        "name": "price_sats",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "seller_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "buyer_address",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "8bfea77450f131e660f6e886d832ebb654a058f558b402c4b6a15d20807c41ad"
+}

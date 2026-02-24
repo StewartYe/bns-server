@@ -240,18 +240,6 @@ async fn rebuild_rankings_from_postgres(
             tracing::warn!("Failed to add {} to new_listings: {:?}", row.name, e);
         }
 
-        // Add to top_sales ranking
-        let top_sale_item = TopSaleItem {
-            name: row.name.clone(),
-            price_sats: price,
-            listed_at,
-            discount,
-            seller_address: row.seller_address.clone(),
-        };
-        if let Err(e) = redis.add_top_sale(&top_sale_item).await {
-            tracing::warn!("Failed to add {} to top_sales: {:?}", row.name, e);
-        }
-
         // Add to best_deals ranking
         let best_deal_item = BestDealItem {
             name: row.name.clone(),
@@ -293,6 +281,39 @@ async fn rebuild_rankings_from_postgres(
         };
         if let Err(e) = redis.add_recent_sale(&recent_sale_item).await {
             tracing::warn!("Failed to add {} to recent_sales: {:?}", row.name, e);
+        }
+    }
+
+    // Step 3: Rebuild top sales from sold items (from trade_history)
+    let sold_rows = sqlx::query_as!(
+        SoldRow,
+        "SELECT name, price_sats, seller_address, buyer_address, updated_at
+         FROM trade_history
+         WHERE action IN ('buy_and_relist', 'buy_and_delist')
+           AND status IN ('pending', 'finalized', 'confirmed')
+           AND updated_at >= NOW() - INTERVAL '24 hours'
+         ORDER BY price_sats DESC
+         LIMIT 20",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    tracing::info!(
+        "Rebuilding recent_sales from {} sold items",
+        sold_rows.len()
+    );
+
+    for row in &sold_rows {
+        // Add to top_sales ranking
+        let top_sale_item = TopSaleItem {
+            name: row.name.clone(),
+            price_sats: row.price_sats.unwrap_or(0) as u64,
+            seller_address: row.seller_address.clone().unwrap_or_default(),
+            buyer_address: row.buyer_address.clone().unwrap_or_default(),
+            sold_at: row.updated_at.timestamp(),
+        };
+        if let Err(e) = redis.add_top_sale(&top_sale_item).await {
+            tracing::warn!("Failed to add {} to top_sales: {:?}", row.name, e);
         }
     }
 

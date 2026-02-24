@@ -99,15 +99,14 @@ pub struct NewListingItem {
 }
 
 /// Item for top-sales ranking (score = price_sats)
-/// Same fields as NewListingItem and BestDealItem
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopSaleItem {
     pub name: String,
     pub price_sats: u64,
-    pub listed_at: i64,
-    pub discount: f64,
+    pub sold_at: i64,
     pub seller_address: String,
+    pub buyer_address: String,
 }
 
 /// Item for best-deals ranking (score = discount)

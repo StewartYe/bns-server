@@ -17,6 +17,7 @@ use crate::service::DynUserService;
 use crate::state::BroadcastEvent;
 use crate::{GLOBAL_MIN_PRICE, INIT_MAX_PRICE};
 use chrono::Utc;
+use rust_decimal::prelude::ToPrimitive;
 use tokio::sync::broadcast;
 
 /// Event service for canister event polling
@@ -660,7 +661,20 @@ impl EventService {
         }
         self.broadcast(BroadcastEvent::MostTraded(most_traded_item));
 
-        // 3. top_earners
+        // 3. top_sales
+        let top_sale_item = TopSaleItem {
+            name: name.to_string(),
+            price_sats: prev_listing.price_sats,
+            sold_at: prev_listing.updated_at.timestamp(),
+            seller_address: prev_listing.seller_address.clone(),
+            buyer_address: buyer_address.to_string(),
+        };
+        if let Err(e) = self.redis.add_top_sale(&top_sale_item).await {
+            tracing::error!("Failed to add {} to top-sales ranking: {:?}", name, e);
+        }
+        self.broadcast(BroadcastEvent::TopSale(top_sale_item));
+
+        // 4. top_earners
         match self
             .postgres
             .get_top_earner(&prev_listing.seller_address)
@@ -698,11 +712,6 @@ impl EventService {
         }
         self.broadcast(BroadcastEvent::RemoveNewListing(name.to_string()));
 
-        if let Err(e) = self.redis.rem_top_sale(name).await {
-            tracing::error!("Failed to remove {} from top-sales ranking: {:?}", name, e);
-        }
-        self.broadcast(BroadcastEvent::RemoveTopSale(name.to_string()));
-
         if let Err(e) = self.redis.rem_best_deal(name).await {
             tracing::error!("Failed to remove {} from best-deals ranking: {:?}", name, e);
         }
@@ -732,20 +741,7 @@ impl EventService {
         }
         self.broadcast(BroadcastEvent::NewListing(new_listing_item));
 
-        // 2. top_sales
-        let top_sale_item = TopSaleItem {
-            name: name.to_string(),
-            price_sats: price,
-            listed_at,
-            discount,
-            seller_address: seller_address.clone(),
-        };
-        if let Err(e) = self.redis.add_top_sale(&top_sale_item).await {
-            tracing::error!("Failed to add {} to top-sales ranking: {:?}", name, e);
-        }
-        self.broadcast(BroadcastEvent::TopSale(top_sale_item));
-
-        // 3. best_deals
+        // 2. best_deals
         let best_deal_item = BestDealItem {
             name: name.to_string(),
             price_sats: price,

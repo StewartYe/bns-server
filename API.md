@@ -1458,23 +1458,11 @@ Sent when a listing is removed (sold or delisted).
   "key": "MY•RUNE•NAME",
   "data": {
     "name": "MY•RUNE•NAME",
-    "priceSats": 500000,
-    "listedAt": 1735344000,
-    "discount": 0.79,
-    "sellerAddress": "tb1q..."
+    "priceSats": 100000,
+    "sellerAddress": "tb1q...",
+    "buyerAddress": "tb1q...",
+    "soldAt": 1735344000
   }
-}
-```
-
-**Delta Remove (top-sales):**
-
-```json
-{
-  "type": "delta",
-  "channel": "top-sales",
-  "ts": 1735344000123,
-  "op": "remove",
-  "key": "MY•RUNE•NAME"
 }
 ```
 

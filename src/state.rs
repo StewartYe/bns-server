@@ -34,8 +34,6 @@ pub enum BroadcastEvent {
     TopEarner(TopEarnerItem),
     /// Remove from new_listings ranking
     RemoveNewListing(String),
-    /// Remove from top_sales ranking
-    RemoveTopSale(String),
     /// Remove from best_deals ranking
     RemoveBestDeal(String),
     /// Market online users changed

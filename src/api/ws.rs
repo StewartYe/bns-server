@@ -331,14 +331,6 @@ async fn run_broadcast_listener(
                             "key": name
                         }))
                     }
-                    // RemoveTopSale event goes to top-sales channel
-                    (BroadcastEvent::RemoveTopSale(name), "top-sales") => Some(serde_json::json!({
-                        "type": "delta",
-                        "channel": "top-sales",
-                        "ts": ts,
-                        "op": "remove",
-                        "key": name
-                    })),
                     // RemoveBestDeal event goes to best-deals channel
                     (BroadcastEvent::RemoveBestDeal(name), "best-deals") => {
                         Some(serde_json::json!({
