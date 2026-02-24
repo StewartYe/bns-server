@@ -56,6 +56,7 @@ pub trait PostgresClient: Send + Sync {
 
     // Trade history operations
     async fn add_trade_record(&self, record: &TradeRecord) -> Result<()>;
+    async fn del_trade_record(&self, tx_id: &str) -> Result<()>;
     async fn get_pending_trades(&self) -> Result<Vec<TradeRecord>>;
     async fn get_trade_by_tx_id(&self, tx_id: &str) -> Result<Option<TradeRecord>>;
     async fn update_trade_status(
@@ -408,6 +409,12 @@ impl PostgresClient for PostgresClientImpl {
         Ok(())
     }
 
+    async fn del_trade_record(&self, tx_id: &str) -> Result<()> {
+        sqlx::query!("DELETE FROM trade_history where tx_id=$1", tx_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
     async fn get_pending_trades(&self) -> Result<Vec<TradeRecord>> {
         let rows = sqlx::query_as!(TradeHistoryRow,
             "SELECT id, name, who, action, tx_id, created_at, updated_at, status, seller_address, previous_price_sats, price_sats, inscription_utxo_sats, buyer_address, platform_fee FROM trade_history WHERE status IN ('submitted', 'pending') ORDER BY created_at"

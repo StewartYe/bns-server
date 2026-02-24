@@ -17,7 +17,6 @@ use crate::service::DynUserService;
 use crate::state::BroadcastEvent;
 use crate::{GLOBAL_MIN_PRICE, INIT_MAX_PRICE};
 use chrono::Utc;
-use rust_decimal::prelude::ToPrimitive;
 use tokio::sync::broadcast;
 
 /// Event service for canister event polling

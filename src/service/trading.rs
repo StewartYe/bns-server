@@ -135,11 +135,11 @@ impl TradingService {
             .ok_or_else(|| AppError::BadRequest("No intention in intention_set".to_string()))?;
 
         let psbt = parse_psbt(&request.psbt_hex)?;
-        let _tx = psbt
+        let tx = psbt
             .clone()
             .extract_tx()
             .map_err(|e| AppError::BadRequest(format!("Failed to extract tx from PSBT: {}", e)))?;
-
+        let tx_id = tx.compute_txid().to_string();
         let params: BuyAndRelistParams = serde_json::from_str(&intention.action_params)
             .map_err(|e| AppError::BadRequest(format!("Invalid action_params JSON: {}", e)))?;
 
@@ -192,26 +192,8 @@ impl TradingService {
         }
 
         BuyAndRelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
-
         self.validate_price(db_listing.price_sats, params.new_price)?;
-
-        let proof_bytes = request.initiator_utxo_proof.clone();
-        let invoke_args = InvokeArgs {
-            client_info: None,
-            intention_set: request.intention_set.clone(),
-            initiator_utxo_proof: serde_bytes::ByteBuf::from(proof_bytes),
-            psbt_hex: request.psbt_hex.clone(),
-        };
-
-        let tx_id = self.ic_agent.invoke(invoke_args).await?;
-
-        tracing::info!(
-            "Invoke succeeded for name '{}', tx_id: {}",
-            params.name,
-            tx_id
-        );
         let output0_value = psbt.unsigned_tx.output[0].value.to_sat();
-
         // Create trade history record
         let now = Utc::now();
         let trade_record = TradeRecord {
@@ -233,14 +215,39 @@ impl TradingService {
 
         if let Err(e) = self.postgres.add_trade_record(&trade_record).await {
             tracing::error!("Failed to add trade record for tx_id {}: {:?}", tx_id, e);
+            return Err(e);
         }
 
-        Ok(ListResponse {
-            tx_id,
-            name: params.name,
-            price_sats: params.new_price,
-            seller_address: params.buyer_address,
-        })
+        let proof_bytes = request.initiator_utxo_proof.clone();
+        let invoke_args = InvokeArgs {
+            client_info: None,
+            intention_set: request.intention_set.clone(),
+            initiator_utxo_proof: serde_bytes::ByteBuf::from(proof_bytes),
+            psbt_hex: request.psbt_hex.clone(),
+        };
+
+        match self.ic_agent.invoke(invoke_args).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Invoke succeeded for name '{}', tx_id: {}",
+                    params.name,
+                    tx_id
+                );
+
+                Ok(ListResponse {
+                    tx_id,
+                    name: params.name,
+                    price_sats: params.new_price,
+                    seller_address: params.buyer_address,
+                })
+            }
+            Err(e) => {
+                if let Err(ee) = self.postgres.del_trade_record(tx_id.as_str()).await {
+                    tracing::error!("Failed to del failed trade history error: {}", ee);
+                }
+                Err(e)
+            }
+        }
     }
 
     pub async fn relist(
@@ -338,11 +345,11 @@ impl TradingService {
             .ok_or_else(|| AppError::BadRequest("No intention in intention_set".to_string()))?;
 
         let psbt = parse_psbt(&request.psbt_hex)?;
-        let _tx = psbt
+        let tx = psbt
             .clone()
             .extract_tx()
             .map_err(|e| AppError::BadRequest(format!("Failed to extract tx from PSBT: {}", e)))?;
-
+        let tx_id = tx.compute_txid().to_string();
         let params: BuyAndDelistParams = serde_json::from_str(&intention.action_params)
             .map_err(|e| AppError::BadRequest(format!("Invalid action_params JSON: {}", e)))?;
 
@@ -388,24 +395,7 @@ impl TradingService {
                 "fee_sats + payment_sats != price_sats".to_string(),
             ));
         }
-
         BuyAndDelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
-        let proof_bytes = request.initiator_utxo_proof.clone();
-        let invoke_args = InvokeArgs {
-            client_info: None,
-            intention_set: request.intention_set.clone(),
-            initiator_utxo_proof: serde_bytes::ByteBuf::from(proof_bytes),
-            psbt_hex: request.psbt_hex.clone(),
-        };
-
-        let tx_id = self.ic_agent.invoke(invoke_args).await?;
-
-        tracing::info!(
-            "Invoke succeeded for name '{}', tx_id: {}",
-            params.name,
-            tx_id
-        );
-
         // Create trade history record
         let now = Utc::now();
         let trade_record = TradeRecord {
@@ -431,14 +421,37 @@ impl TradingService {
 
         if let Err(e) = self.postgres.add_trade_record(&trade_record).await {
             tracing::error!("Failed to add trade record for tx_id {}: {:?}", tx_id, e);
+            return Err(e);
         }
 
-        Ok(ListResponse {
-            tx_id,
-            name: params.name,
-            price_sats: 0,
-            seller_address: params.buyer_address,
-        })
+        let proof_bytes = request.initiator_utxo_proof.clone();
+        let invoke_args = InvokeArgs {
+            client_info: None,
+            intention_set: request.intention_set.clone(),
+            initiator_utxo_proof: serde_bytes::ByteBuf::from(proof_bytes),
+            psbt_hex: request.psbt_hex.clone(),
+        };
+        match self.ic_agent.invoke(invoke_args).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Invoke succeeded for name '{}', tx_id: {}",
+                    params.name,
+                    tx_id
+                );
+                Ok(ListResponse {
+                    tx_id,
+                    name: params.name,
+                    price_sats: 0,
+                    seller_address: params.buyer_address,
+                })
+            }
+            Err(e) => {
+                if let Err(ee) = self.postgres.del_trade_record(tx_id.as_str()).await {
+                    tracing::error!("Failed to del failed trade history error: {}", ee);
+                }
+                Err(e)
+            }
+        }
     }
 
     pub async fn delist(
@@ -453,11 +466,11 @@ impl TradingService {
             .ok_or_else(|| AppError::BadRequest("No intention in intention_set".to_string()))?;
 
         let psbt = parse_psbt(&request.psbt_hex)?;
-        let _tx = psbt
+        let tx = psbt
             .clone()
             .extract_tx()
             .map_err(|e| AppError::BadRequest(format!("Failed to extract tx from PSBT: {}", e)))?;
-
+        let tx_id = tx.compute_txid().to_string();
         let params: DelistParams = serde_json::from_str(&intention.action_params)
             .map_err(|e| AppError::BadRequest(format!("Invalid action_params JSON: {}", e)))?;
 
@@ -497,22 +510,6 @@ impl TradingService {
 
         DelistValidator::validate_psbt(&psbt, &db_pool_address, Some(&db_listing), &params)?;
 
-        let proof_bytes = request.initiator_utxo_proof.clone();
-        let invoke_args = InvokeArgs {
-            client_info: None,
-            intention_set: request.intention_set.clone(),
-            initiator_utxo_proof: serde_bytes::ByteBuf::from(proof_bytes),
-            psbt_hex: request.psbt_hex.clone(),
-        };
-
-        let tx_id = self.ic_agent.invoke(invoke_args).await?;
-
-        tracing::info!(
-            "Invoke succeeded for name '{}', tx_id: {}",
-            params.name,
-            tx_id
-        );
-
         // Create trade history record
         let now = Utc::now();
         let trade_record = TradeRecord {
@@ -538,12 +535,37 @@ impl TradingService {
 
         if let Err(e) = self.postgres.add_trade_record(&trade_record).await {
             tracing::error!("Failed to add trade record for tx_id {}: {:?}", tx_id, e);
+            return Err(e);
         }
 
-        Ok(DelistResponse {
-            tx_id,
-            name: params.name,
-        })
+        //send to canister
+        let proof_bytes = request.initiator_utxo_proof.clone();
+        let invoke_args = InvokeArgs {
+            client_info: None,
+            intention_set: request.intention_set.clone(),
+            initiator_utxo_proof: serde_bytes::ByteBuf::from(proof_bytes),
+            psbt_hex: request.psbt_hex.clone(),
+        };
+
+        match self.ic_agent.invoke(invoke_args).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Invoke succeeded for name '{}', tx_id: {}",
+                    params.name,
+                    tx_id
+                );
+                Ok(DelistResponse {
+                    tx_id,
+                    name: params.name,
+                })
+            }
+            Err(e) => {
+                if let Err(ee) = self.postgres.del_trade_record(tx_id.as_str()).await {
+                    tracing::error!("Failed to del failed trade history error: {}", ee);
+                }
+                Err(e)
+            }
+        }
     }
 
     // ========================================================================
@@ -558,11 +580,11 @@ impl TradingService {
             .ok_or_else(|| AppError::BadRequest("No intention in intention_set".to_string()))?;
 
         let psbt = parse_psbt(&request.psbt_hex)?;
-        let _tx = psbt
+        let tx = psbt
             .clone()
             .extract_tx()
             .map_err(|e| AppError::BadRequest(format!("Failed to extract tx from PSBT: {}", e)))?;
-
+        let tx_id = tx.compute_txid().to_string();
         let params: ListNameParams = serde_json::from_str(&intention.action_params)
             .map_err(|e| AppError::BadRequest(format!("Invalid action_params JSON: {}", e)))?;
 
@@ -629,21 +651,6 @@ impl TradingService {
                 "Failed to calculate previous price".to_string(),
             ))?;
         self.validate_price(previous_price_sats, params.price)?;
-
-        let invoke_args = InvokeArgs {
-            client_info: None,
-            intention_set: request.intention_set.clone(),
-            initiator_utxo_proof: serde_bytes::ByteBuf::from(request.initiator_utxo_proof.clone()),
-            psbt_hex: request.psbt_hex.clone(),
-        };
-
-        let tx_id = self.ic_agent.invoke(invoke_args).await?;
-
-        tracing::info!(
-            "Invoke succeeded for name '{}', tx_id: {}",
-            params.name,
-            tx_id
-        );
         let output0_value = psbt.unsigned_tx.output[0].value.to_sat();
 
         // Create trade history record
@@ -667,14 +674,35 @@ impl TradingService {
 
         if let Err(e) = self.postgres.add_trade_record(&trade_record).await {
             tracing::error!("Failed to add trade record for tx_id {}: {:?}", tx_id, e);
+            return Err(e);
         }
-
-        Ok(ListResponse {
-            tx_id,
-            name: params.name,
-            price_sats: params.price,
-            seller_address: params.seller_address,
-        })
+        let invoke_args = InvokeArgs {
+            client_info: None,
+            intention_set: request.intention_set.clone(),
+            initiator_utxo_proof: serde_bytes::ByteBuf::from(request.initiator_utxo_proof.clone()),
+            psbt_hex: request.psbt_hex.clone(),
+        };
+        match self.ic_agent.invoke(invoke_args).await {
+            Ok(_) => {
+                tracing::info!(
+                    "Invoke succeeded for name '{}', tx_id: {}",
+                    params.name,
+                    tx_id
+                );
+                Ok(ListResponse {
+                    tx_id,
+                    name: params.name,
+                    price_sats: params.price,
+                    seller_address: params.seller_address,
+                })
+            }
+            Err(e) => {
+                if let Err(ee) = self.postgres.del_trade_record(tx_id.as_str()).await {
+                    tracing::error!("Failed to del failed trade history error: {}", ee);
+                }
+                Err(e)
+            }
+        }
     }
 
     pub async fn calculate_previous_price(&self, name: &str) -> Option<u64> {
