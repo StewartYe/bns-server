@@ -17,6 +17,7 @@ use crate::domain::{
     TradeHistoryItem, TradeRecord, TradeStatus, UserHistoriesResponse, UserSession,
 };
 use crate::error::{AppError, Result};
+use crate::infra::bns_canister::Utxo;
 use crate::infra::orchestrator_canister::InvokeArgs;
 use crate::infra::{DynBlockchainClient, DynPostgresClient, DynRedisClient, IcAgent};
 use crate::service::trading_validators::buy_and_delist_validator::BuyAndDelistValidator;
@@ -791,6 +792,23 @@ impl TradingService {
             })
             .collect();
         Ok(NameHistoriesResponse { histories, total })
+    }
+
+    pub async fn get_inscription_utxo(&self, name: &str) -> Option<Utxo> {
+        let last_action_by_name = self.postgres.get_last_name_trade_record(name).await;
+        let mut owner_inscription_checked = false;
+        if let Ok(Some(tr)) = last_action_by_name {
+            if tr.action == TradeAction::Delist || tr.action == TradeAction::BuyAndDelist {
+                return Some(Utxo {
+                    coins: vec![],
+                    sats: tr.inscription_utxo_sats,
+                    txid: tr.tx_id.clone().unwrap(),
+                    vout: 0,
+                });
+            }
+        }
+
+        None
     }
 
     pub async fn get_user_history(

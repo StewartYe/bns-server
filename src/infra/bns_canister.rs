@@ -2,6 +2,7 @@
 // You may want to manually adjust some of the types.
 #![allow(dead_code, unused_imports)]
 use candid::{self, CandidType, Decode, Deserialize, Encode, Principal};
+use serde::Serialize;
 
 #[derive(CandidType, Deserialize)]
 pub enum Result_ {
@@ -15,7 +16,7 @@ pub enum Result1 {
     Err(String),
 }
 
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Serialize, Deserialize)]
 pub struct CoinBalance {
     pub id: String,
     pub value: candid::Nat,
@@ -33,7 +34,7 @@ pub struct OutputCoin {
     pub coin: CoinBalance,
 }
 
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Serialize, Deserialize)]
 pub struct Utxo {
     pub coins: Vec<CoinBalance>,
     pub sats: u64,

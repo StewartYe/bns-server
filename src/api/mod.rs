@@ -84,7 +84,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/rankings/{type}", get(rankings::get_ranking))
         .route("/shout-outs", get(shout_out::get_shout_outs))
         // WebSocket endpoint
-        .route("/ws/connect", get(ws::ws_handler));
+        .route("/ws/connect", get(ws::ws_handler))
+        .route(
+            "/tradings/inscription-utxo/{name}",
+            get(get_inscription_utxo),
+        );
 
     let v1_router = Router::new()
         .merge(authenticated_router)

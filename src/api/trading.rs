@@ -11,6 +11,7 @@ use crate::domain::{
     NameHistoriesResponse, RelistRequest, RelistResponse, UserHistoriesResponse, UserSession,
 };
 use crate::error::Result;
+use crate::infra::bns_canister::Utxo;
 use crate::state::AppState;
 use axum::extract::Path;
 use axum::{
@@ -18,7 +19,6 @@ use axum::{
     extract::{Query, State},
 };
 use serde::Deserialize;
-
 // ============================================================================
 // Get Pool Address
 // ============================================================================
@@ -197,5 +197,16 @@ pub async fn name_history(
         .trading_service
         .get_name_history(name.as_str(), None, Some(offset))
         .await?;
+    Ok(Json(resp))
+}
+
+pub async fn get_inscription_utxo(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Option<Utxo>>> {
+    let resp = state
+        .trading_service
+        .get_inscription_utxo(name.as_str())
+        .await;
     Ok(Json(resp))
 }
