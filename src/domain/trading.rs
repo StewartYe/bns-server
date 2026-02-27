@@ -269,6 +269,7 @@ pub struct UserHistoriesResponse {
 pub struct TradeHistoryItem {
     pub id: String,
     pub name: String,
+    pub txid: String,
     pub action: String,
     pub price_sats: Option<u64>,
     pub status: String,
@@ -287,6 +288,7 @@ pub struct NameHistoriesResponse {
 pub struct NameDealHistory {
     pub seller_address: String,
     pub buyer_address: String,
+    pub txid: String,
     pub price_sats: u64,
     pub time: DateTime<Utc>,
 }

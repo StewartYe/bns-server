@@ -787,6 +787,7 @@ impl TradingService {
             .map(|r| NameDealHistory {
                 seller_address: r.seller_address.unwrap_or_default(),
                 buyer_address: r.buyer_address.unwrap_or_default(),
+                txid: r.tx_id.unwrap_or_default(),
                 price_sats: r.price_sats.unwrap_or(0),
                 time: r.updated_at,
             })
@@ -796,7 +797,6 @@ impl TradingService {
 
     pub async fn get_inscription_utxo(&self, name: &str) -> Option<Utxo> {
         let last_action_by_name = self.postgres.get_last_name_trade_record(name).await;
-        let mut owner_inscription_checked = false;
         if let Ok(Some(tr)) = last_action_by_name {
             if tr.action == TradeAction::Delist || tr.action == TradeAction::BuyAndDelist {
                 return Some(Utxo {
@@ -807,7 +807,6 @@ impl TradingService {
                 });
             }
         }
-
         None
     }
 
@@ -826,6 +825,7 @@ impl TradingService {
             .map(|r| TradeHistoryItem {
                 id: r.id,
                 name: r.name,
+                txid: r.tx_id.unwrap(),
                 action: r.action.to_string(),
                 price_sats: r.price_sats,
                 status: r.status.to_string(),

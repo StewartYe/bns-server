@@ -445,6 +445,7 @@ impl EventService {
         let activity = TradeHistoryItem {
             id: trade_record.id.clone(),
             name: trade_record.name.clone(),
+            txid: trade_record.tx_id.clone().unwrap_or_default(),
             action: trade_record.action.to_string(),
             price_sats: trade_record.price_sats,
             status: trade_record.status.to_string(),
