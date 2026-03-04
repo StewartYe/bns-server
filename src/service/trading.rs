@@ -205,7 +205,7 @@ impl TradingService {
             tx_id: Some(tx_id.clone()),
             created_at: now,
             updated_at: now,
-            status: TradeStatus::Submitted,
+            status: TradeStatus::Pending,
             seller_address: Some(db_listing.seller_address),
             previous_price_sats: Some(db_listing.price_sats),
             price_sats: Some(params.new_price),
@@ -234,7 +234,7 @@ impl TradingService {
                     params.name,
                     tx_id
                 );
-
+                self.event_service.handle_pending(&trade_record).await;
                 Ok(ListResponse {
                     tx_id,
                     name: params.name,
@@ -320,7 +320,7 @@ impl TradingService {
             .await
         {
             self.event_service
-                .update_listing_rankings(&updated_listing, previous_price_sats)
+                .update_listing_rankings(&updated_listing, previous_price_sats, false)
                 .await;
         }
 
@@ -407,7 +407,7 @@ impl TradingService {
             tx_id: Some(tx_id.clone()),
             created_at: now,
             updated_at: now,
-            status: TradeStatus::Submitted,
+            status: TradeStatus::Pending,
             seller_address: Some(db_listing.seller_address),
             previous_price_sats: Some(db_listing.price_sats),
             price_sats: Some(db_listing.price_sats),
@@ -439,6 +439,7 @@ impl TradingService {
                     params.name,
                     tx_id
                 );
+                self.event_service.handle_pending(&trade_record).await;
                 Ok(ListResponse {
                     tx_id,
                     name: params.name,
@@ -521,7 +522,7 @@ impl TradingService {
             tx_id: Some(tx_id.clone()),
             created_at: now,
             updated_at: now,
-            status: TradeStatus::Submitted,
+            status: TradeStatus::Pending,
             seller_address: Some(db_listing.seller_address),
             previous_price_sats: Some(db_listing.price_sats),
             price_sats: Some(db_listing.price_sats),
@@ -555,6 +556,7 @@ impl TradingService {
                     params.name,
                     tx_id
                 );
+                self.event_service.handle_pending(&trade_record).await;
                 Ok(DelistResponse {
                     tx_id,
                     name: params.name,
@@ -664,7 +666,7 @@ impl TradingService {
             tx_id: Some(tx_id.clone()),
             created_at: now,
             updated_at: now,
-            status: TradeStatus::Submitted,
+            status: TradeStatus::Pending,
             seller_address: Some(params.seller_address.clone()),
             previous_price_sats: Some(previous_price_sats),
             price_sats: Some(params.price),
@@ -690,6 +692,7 @@ impl TradingService {
                     params.name,
                     tx_id
                 );
+                self.event_service.handle_pending(&trade_record).await;
                 Ok(ListResponse {
                     tx_id,
                     name: params.name,
@@ -825,7 +828,7 @@ impl TradingService {
             .map(|r| TradeHistoryItem {
                 id: r.id,
                 name: r.name,
-                txid: r.tx_id.unwrap(),
+                txid: r.tx_id.unwrap_or_default(),
                 action: r.action.to_string(),
                 price_sats: r.price_sats,
                 status: r.status.to_string(),

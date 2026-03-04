@@ -141,7 +141,8 @@ impl EventService {
 
         match status {
             ReeActionStatus::Pending => {
-                match self
+                //DO NOTHING
+                /*   match self
                     .postgres
                     .update_trade_status(action_id, TradeStatus::Pending)
                     .await
@@ -158,7 +159,7 @@ impl EventService {
                     Err(e) => {
                         tracing::error!("Failed to update trade status: {:?}", e);
                     }
-                }
+                }*/
             }
             ReeActionStatus::Finalized => {
                 match self
@@ -219,7 +220,7 @@ impl EventService {
     // Handle Pending status - modify listings table
     // ========================================================================
 
-    async fn handle_pending(&self, trade_record: &TradeRecord) {
+    pub async fn handle_pending(&self, trade_record: &TradeRecord) {
         match trade_record.action {
             TradeAction::List => {
                 self.handle_list_pending(trade_record).await;
@@ -270,7 +271,7 @@ impl EventService {
             tracing::info!("Saved listing to PostgreSQL: name={}", name);
         }
 
-        self.update_listing_rankings(&listing, previous_price_sats)
+        self.update_listing_rankings(&listing, previous_price_sats, true)
             .await;
 
         self.broadcast_trade_updates(trade_record, false).await;
@@ -332,7 +333,7 @@ impl EventService {
 
         // Re-read the updated listing for new ranking data
         if let Ok(Some(updated_listing)) = self.postgres.get_listed_listing_by_name(name).await {
-            self.update_listing_rankings(&updated_listing, previous_price_sats)
+            self.update_listing_rankings(&updated_listing, previous_price_sats, false)
                 .await;
         }
 
@@ -523,7 +524,7 @@ impl EventService {
             tracing::info!("Rolled back delist for {} (rejected)", name);
         }
 
-        self.update_listing_rankings(&listing, previous_price_sats)
+        self.update_listing_rankings(&listing, previous_price_sats, true)
             .await;
     }
 
@@ -551,7 +552,8 @@ impl EventService {
         // Update rankings
         self.remove_listing_rankings(name).await;
         if let Ok(Some(listing)) = self.postgres.get_listed_listing_by_name(name).await {
-            self.update_listing_rankings(&listing, original_price).await;
+            self.update_listing_rankings(&listing, original_price, true)
+                .await;
         }
 
         // TODO: Also need to reverse sale rankings (recent-sales, top-earners, most-traded)
@@ -584,7 +586,7 @@ impl EventService {
             tracing::info!("Rolled back buy_and_delist for {} (rejected)", name);
         }
 
-        self.update_listing_rankings(&listing, previous_price_sats)
+        self.update_listing_rankings(&listing, previous_price_sats, true)
             .await;
     }
 
@@ -720,7 +722,12 @@ impl EventService {
         tracing::info!("Removed {} from listing rankings", name);
     }
 
-    pub async fn update_listing_rankings(&self, listing: &Listing, previous_price_sats: u64) {
+    pub async fn update_listing_rankings(
+        &self,
+        listing: &Listing,
+        previous_price_sats: u64,
+        new_listing: bool,
+    ) {
         let name = listing.name.as_str();
         let price = listing.price_sats;
         let seller_address = &listing.seller_address;
@@ -728,18 +735,20 @@ impl EventService {
 
         let discount = crate::utils::calculate_discount(price, previous_price_sats);
 
-        // 1. new_listings
-        let new_listing_item = NewListingItem {
-            name: name.to_string(),
-            price_sats: price,
-            listed_at,
-            discount,
-            seller_address: seller_address.clone(),
-        };
-        if let Err(e) = self.redis.add_new_listing(&new_listing_item).await {
-            tracing::error!("Failed to add {} to new-listings ranking: {:?}", name, e);
+        if new_listing {
+            // 1. new_listings
+            let new_listing_item = NewListingItem {
+                name: name.to_string(),
+                price_sats: price,
+                listed_at,
+                discount,
+                seller_address: seller_address.clone(),
+            };
+            if let Err(e) = self.redis.add_new_listing(&new_listing_item).await {
+                tracing::error!("Failed to add {} to new-listings ranking: {:?}", name, e);
+            }
+            self.broadcast(BroadcastEvent::NewListing(new_listing_item));
         }
-        self.broadcast(BroadcastEvent::NewListing(new_listing_item));
 
         // 2. best_deals
         let best_deal_item = BestDealItem {
